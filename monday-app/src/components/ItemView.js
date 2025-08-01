@@ -1,1 +1,140 @@
-import React, { useState, useEffect } from 'react';\nimport { useQuery, useMutation, useQueryClient } from 'react-query';\nimport { useForm } from 'react-hook-form';\nimport {\n  Box,\n  Flex,\n  TextField,\n  Dropdown,\n  FileUpload,\n  Button,\n  Loader,\n  Toast,\n  Divider,\n  Heading,\n  Text,\n  Card,\n  ProgressBar,\n  Badge,\n  IconButton\n} from '@vibe/core';\nimport {\n  Calculator,\n  Upload,\n  FileText,\n  CheckCircle,\n  AlertTriangle,\n  Refresh,\n  Download\n} from '@vibe/core/icons';\n\nimport { useAppContext } from '../contexts/AppContext';\nimport { MondayService } from '../services/MondayService';\nimport { N8NService } from '../services/N8NService';\nimport { formatCurrency, formatDate } from '../utils/helpers';\n\nconst ItemView = ({ context, settings, monday }) => {\n  const { user } = useAppContext();\n  const queryClient = useQueryClient();\n  const [uploadedFiles, setUploadedFiles] = useState([]);\n  const [estimationResults, setEstimationResults] = useState(null);\n  const [workflowStatus, setWorkflowStatus] = useState('idle');\n  const [toasts, setToasts] = useState([]);\n\n  const { register, handleSubmit, watch, setValue, formState: { errors } } = useForm({\n    defaultValues: {\n      projectType: settings?.default_project_type || 'residential',\n      squareFootage: '',\n      complexityLevel: 'standard',\n      location: 'suburban',\n      specialRequirements: []\n    }\n  });\n\n  // Get current item data\n  const { data: itemData, isLoading: itemLoading } = useQuery(\n    ['item', context?.itemId],\n    () => MondayService.getItem(context.itemId),\n    {\n      enabled: !!context?.itemId,\n      staleTime: 30000\n    }\n  );\n\n  // Get board columns for dynamic form building\n  const { data: boardColumns } = useQuery(\n    ['board-columns', context?.boardId],\n    () => MondayService.getBoardColumns(context.boardId),\n    {\n      enabled: !!context?.boardId,\n      staleTime: 60000\n    }\n  );\n\n  // Mutation for triggering N8N estimation workflow\n  const estimationMutation = useMutation(\n    async (formData) => {\n      setWorkflowStatus('processing');\n      \n      const payload = {\n        projectId: context.itemId,\n        projectType: formData.projectType,\n        squareFootage: parseInt(formData.squareFootage),\n        complexityLevel: formData.complexityLevel,\n        location: formData.location,\n        specialRequirements: formData.specialRequirements,\n        uploadedFiles: uploadedFiles.map(file => ({\n          name: file.name,\n          url: file.url,\n          type: file.type\n        })),\n        requestedBy: user.id,\n        requestedAt: new Date().toISOString(),\n        source: 'monday-app'\n      };\n\n      const result = await N8NService.triggerEstimationWorkflow(payload);\n      return result;\n    },\n    {\n      onSuccess: (data) => {\n        setEstimationResults(data);\n        setWorkflowStatus('completed');\n        addToast('✅ Estimation completed successfully!', 'success');\n        \n        // Update Monday item with results\n        updateMondayItem(data);\n        \n        // Invalidate queries to refresh data\n        queryClient.invalidateQueries(['item', context.itemId]);\n      },\n      onError: (error) => {\n        console.error('Estimation failed:', error);\n        setWorkflowStatus('error');\n        addToast(`❌ Estimation failed: ${error.message}`, 'error');\n      }\n    }\n  );\n\n  // Mutation for NEC compliance check\n  const complianceMutation = useMutation(\n    async () => {\n      if (!estimationResults) return;\n      \n      const payload = {\n        projectId: context.itemId,\n        projectType: estimationResults.input.projectType,\n        squareFootage: estimationResults.input.squareFootage,\n        roomLayout: estimationResults.floorPlanAnalysis?.rooms || [],\n        electricalElements: estimationResults.electricalMarkup || [],\n        proposedCircuits: estimationResults.calculations?.circuits || [],\n        panelSpecifications: estimationResults.calculations?.panel || {}\n      };\n\n      const result = await N8NService.triggerComplianceCheck(payload);\n      return result;\n    },\n    {\n      onSuccess: (data) => {\n        addToast(`📋 Compliance check completed: ${data.compliance.status}`, \n          data.compliance.status === 'COMPLIANT' ? 'success' : 'warning');\n        \n        // Update estimation results with compliance data\n        setEstimationResults(prev => ({\n          ...prev,\n          compliance: data.compliance,\n          violations: data.violations\n        }));\n      },\n      onError: (error) => {\n        addToast(`❌ Compliance check failed: ${error.message}`, 'error');\n      }\n    }\n  );\n\n  const updateMondayItem = async (results) => {\n    try {\n      const columnValues = {\n        // Update cost columns if they exist\n        numbers: results.estimation?.totalCost,\n        numbers2: results.technical?.totalLoad,\n        text: results.accuracy,\n        status: { label: 'Estimated' },\n        date: new Date().toISOString().split('T')[0]\n      };\n\n      await MondayService.updateItemColumns(context.itemId, columnValues);\n      addToast('📊 Monday item updated with estimation results', 'info');\n    } catch (error) {\n      console.error('Failed to update Monday item:', error);\n      addToast('⚠️ Could not update Monday item', 'warning');\n    }\n  };\n\n  const handleFileUpload = async (files) => {\n    try {\n      const uploadPromises = files.map(async (file) => {\n        const uploadedFile = await MondayService.uploadFile(file, context.itemId);\n        return {\n          name: file.name,\n          url: uploadedFile.url,\n          type: file.type,\n          size: file.size\n        };\n      });\n\n      const uploadedFileData = await Promise.all(uploadPromises);\n      setUploadedFiles(prev => [...prev, ...uploadedFileData]);\n      addToast(`📎 ${files.length} file(s) uploaded successfully`, 'success');\n    } catch (error) {\n      console.error('File upload failed:', error);\n      addToast('❌ File upload failed', 'error');\n    }\n  };\n\n  const onSubmit = (formData) => {\n    estimationMutation.mutate(formData);\n  };\n\n  const addToast = (message, type = 'info') => {\n    const toast = {\n      id: Date.now(),\n      message,\n      type,\n      timestamp: Date.now()\n    };\n    setToasts(prev => [...prev, toast]);\n    \n    // Auto-remove toast after 5 seconds\n    setTimeout(() => {\n      setToasts(prev => prev.filter(t => t.id !== toast.id));\n    }, 5000);\n  };\n\n  const removeToast = (id) => {\n    setToasts(prev => prev.filter(t => t.id !== id));\n  };\n\n  if (itemLoading) {\n    return (\n      <Box padding=\"large\">\n        <Flex direction=\"column\" align=\"center\" gap=\"medium\">\n          <Loader size=\"large\" />\n          <Text>Loading project data...</Text>\n        </Flex>\n      </Box>\n    );\n  }\n\n  return (\n    <Box padding=\"large\">\n      {/* Header */}\n      <Flex justify=\"space-between\" align=\"center\" marginBottom=\"large\">\n        <Heading size=\"large\">\n          ⚡ ElectricalAI Pro Estimator\n        </Heading>\n        <Badge \n          color={workflowStatus === 'completed' ? 'positive' : \n                 workflowStatus === 'error' ? 'negative' : 'neutral'}\n        >\n          {workflowStatus === 'idle' && 'Ready'}\n          {workflowStatus === 'processing' && 'Processing...'}\n          {workflowStatus === 'completed' && 'Completed'}\n          {workflowStatus === 'error' && 'Error'}\n        </Badge>\n      </Flex>\n\n      <form onSubmit={handleSubmit(onSubmit)}>\n        <Flex direction=\"column\" gap=\"large\">\n          {/* Project Information Card */}\n          <Card>\n            <Box padding=\"large\">\n              <Heading size=\"medium\" marginBottom=\"medium\">\n                📋 Project Information\n              </Heading>\n              \n              <Flex direction=\"column\" gap=\"medium\">\n                <Flex gap=\"medium\">\n                  <Box flex=\"1\">\n                    <Dropdown\n                      label=\"Project Type\"\n                      options={[\n                        { value: 'residential', label: 'Residential' },\n                        { value: 'commercial', label: 'Commercial' },\n                        { value: 'industrial', label: 'Industrial' }\n                      ]}\n                      {...register('projectType', { required: 'Project type is required' })}\n                      error={errors.projectType?.message}\n                    />\n                  </Box>\n                  \n                  <Box flex=\"1\">\n                    <TextField\n                      label=\"Square Footage\"\n                      type=\"number\"\n                      placeholder=\"e.g., 2500\"\n                      {...register('squareFootage', {\n                        required: 'Square footage is required',\n                        min: { value: 100, message: 'Minimum 100 sq ft' },\n                        max: { value: 50000, message: 'Maximum 50,000 sq ft' }\n                      })}\n                      error={errors.squareFootage?.message}\n                    />\n                  </Box>\n                </Flex>\n\n                <Flex gap=\"medium\">\n                  <Box flex=\"1\">\n                    <Dropdown\n                      label=\"Complexity Level\"\n                      options={[\n                        { value: 'simple', label: 'Simple' },\n                        { value: 'standard', label: 'Standard' },\n                        { value: 'complex', label: 'Complex' },\n                        { value: 'high-end', label: 'High-End' }\n                      ]}\n                      {...register('complexityLevel')}\n                    />\n                  </Box>\n                  \n                  <Box flex=\"1\">\n                    <Dropdown\n                      label=\"Location Type\"\n                      options={[\n                        { value: 'urban', label: 'Urban' },\n                        { value: 'suburban', label: 'Suburban' },\n                        { value: 'rural', label: 'Rural' }\n                      ]}\n                      {...register('location')}\n                    />\n                  </Box>\n                </Flex>\n              </Flex>\n            </Box>\n          </Card>\n\n          {/* File Upload Card */}\n          <Card>\n            <Box padding=\"large\">\n              <Heading size=\"medium\" marginBottom=\"medium\">\n                📎 Project Files\n              </Heading>\n              \n              <FileUpload\n                multiple\n                accept=\".pdf,.dwg,.png,.jpg,.jpeg\"\n                onFileChange={handleFileUpload}\n                text=\"Drop files here or click to upload\"\n                subText=\"Supported: PDF, DWG, PNG, JPG (max 50MB each)\"\n              />\n              \n              {uploadedFiles.length > 0 && (\n                <Box marginTop=\"medium\">\n                  <Text size=\"small\" color=\"secondary\">Uploaded Files:</Text>\n                  {uploadedFiles.map((file, index) => (\n                    <Flex key={index} align=\"center\" gap=\"small\" marginTop=\"small\">\n                      <FileText size=\"small\" />\n                      <Text size=\"small\">{file.name}</Text>\n                    </Flex>\n                  ))}\n                </Box>\n              )}\n            </Box>\n          </Card>\n\n          {/* Action Buttons */}\n          <Flex gap=\"medium\">\n            <Button\n              type=\"submit\"\n              size=\"large\"\n              leftIcon={Calculator}\n              loading={estimationMutation.isLoading}\n              disabled={workflowStatus === 'processing'}\n            >\n              Generate Estimate\n            </Button>\n            \n            {estimationResults && (\n              <Button\n                size=\"large\"\n                kind=\"secondary\"\n                leftIcon={CheckCircle}\n                onClick={() => complianceMutation.mutate()}\n                loading={complianceMutation.isLoading}\n              >\n                Check NEC Compliance\n              </Button>\n            )}\n          </Flex>\n\n          {/* Estimation Results */}\n          {estimationResults && (\n            <Card>\n              <Box padding=\"large\">\n                <Heading size=\"medium\" marginBottom=\"medium\">\n                  📊 Estimation Results\n                </Heading>\n                \n                <Flex direction=\"column\" gap=\"medium\">\n                  <Flex gap=\"large\">\n                    <Box>\n                      <Text size=\"small\" color=\"secondary\">Total Cost</Text>\n                      <Heading size=\"large\" color=\"positive\">\n                        {formatCurrency(estimationResults.estimation?.totalCost)}\n                      </Heading>\n                    </Box>\n                    \n                    <Box>\n                      <Text size=\"small\" color=\"secondary\">Electrical Load</Text>\n                      <Heading size=\"medium\">\n                        {estimationResults.technical?.totalLoad?.toLocaleString()} VA\n                      </Heading>\n                    </Box>\n                    \n                    <Box>\n                      <Text size=\"small\" color=\"secondary\">Accuracy</Text>\n                      <Text weight=\"bold\">{estimationResults.accuracy}</Text>\n                    </Box>\n                  </Flex>\n                  \n                  {estimationResults.compliance && (\n                    <Box>\n                      <Divider marginY=\"medium\" />\n                      <Flex align=\"center\" gap=\"small\">\n                        {estimationResults.compliance.status === 'COMPLIANT' ? (\n                          <CheckCircle color=\"positive\" />\n                        ) : (\n                          <AlertTriangle color=\"warning\" />\n                        )}\n                        <Text weight=\"bold\">\n                          NEC Compliance: {estimationResults.compliance.status}\n                        </Text>\n                        <Badge color={estimationResults.compliance.status === 'COMPLIANT' ? 'positive' : 'warning'}>\n                          {estimationResults.compliance.score}% Score\n                        </Badge>\n                      </Flex>\n                    </Box>\n                  )}\n                  \n                  <Box>\n                    <Button\n                      size=\"small\"\n                      kind=\"tertiary\"\n                      leftIcon={Download}\n                      onClick={() => {\n                        // Export results logic\n                        const blob = new Blob([JSON.stringify(estimationResults, null, 2)], \n                          { type: 'application/json' });\n                        const url = URL.createObjectURL(blob);\n                        const a = document.createElement('a');\n                        a.href = url;\n                        a.download = `estimation-${context.itemId}-${Date.now()}.json`;\n                        a.click();\n                      }}\n                    >\n                      Export Results\n                    </Button>\n                  </Box>\n                </Flex>\n              </Box>\n            </Card>\n          )}\n        </Flex>\n      </form>\n\n      {/* Toast Notifications */}\n      {toasts.map((toast) => (\n        <Toast\n          key={toast.id}\n          type={toast.type}\n          open={true}\n          onClose={() => removeToast(toast.id)}\n        >\n          {toast.message}\n        </Toast>\n      ))}\n    </Box>\n  );\n};\n\nexport default ItemView;
+import React, { useState } from 'react';
+
+const ItemView = ({ context, settings, monday }) => {
+  const [formData, setFormData] = useState({
+    projectType: 'residential',
+    squareFootage: '',
+    complexityLevel: 'standard',
+    location: 'suburban'
+  });
+
+  const handleSubmit = (e) => {
+    e.preventDefault();
+    console.log('Form submitted:', formData);
+    alert('ElectricalAI Pro estimation would process here!');
+  };
+
+  const handleChange = (e) => {
+    setFormData({
+      ...formData,
+      [e.target.name]: e.target.value
+    });
+  };
+
+  return (
+    <div style={{ padding: '20px', maxWidth: '600px', margin: '0 auto' }}>
+      <h1>⚡ ElectricalAI Pro Estimator</h1>
+      
+      <form onSubmit={handleSubmit} style={{ background: '#f5f5f5', padding: '20px', borderRadius: '8px' }}>
+        <h2>📋 Project Information</h2>
+        
+        <div style={{ marginBottom: '15px' }}>
+          <label htmlFor="projectType" style={{ display: 'block', marginBottom: '5px' }}>
+            Project Type:
+          </label>
+          <select
+            id="projectType"
+            name="projectType"
+            value={formData.projectType}
+            onChange={handleChange}
+            style={{ width: '100%', padding: '8px', border: '1px solid #ccc', borderRadius: '4px' }}
+          >
+            <option value="residential">Residential</option>
+            <option value="commercial">Commercial</option>
+            <option value="industrial">Industrial</option>
+          </select>
+        </div>
+
+        <div style={{ marginBottom: '15px' }}>
+          <label htmlFor="squareFootage" style={{ display: 'block', marginBottom: '5px' }}>
+            Square Footage:
+          </label>
+          <input
+            id="squareFootage"
+            name="squareFootage"
+            type="number"
+            value={formData.squareFootage}
+            onChange={handleChange}
+            placeholder="e.g., 2500"
+            min="100"
+            max="50000"
+            required
+            style={{ width: '100%', padding: '8px', border: '1px solid #ccc', borderRadius: '4px' }}
+          />
+        </div>
+
+        <div style={{ marginBottom: '15px' }}>
+          <label htmlFor="complexityLevel" style={{ display: 'block', marginBottom: '5px' }}>
+            Complexity Level:
+          </label>
+          <select
+            id="complexityLevel"
+            name="complexityLevel"
+            value={formData.complexityLevel}
+            onChange={handleChange}
+            style={{ width: '100%', padding: '8px', border: '1px solid #ccc', borderRadius: '4px' }}
+          >
+            <option value="simple">Simple</option>
+            <option value="standard">Standard</option>
+            <option value="complex">Complex</option>
+            <option value="high-end">High-End</option>
+          </select>
+        </div>
+
+        <div style={{ marginBottom: '20px' }}>
+          <label htmlFor="location" style={{ display: 'block', marginBottom: '5px' }}>
+            Location Type:
+          </label>
+          <select
+            id="location"
+            name="location"
+            value={formData.location}
+            onChange={handleChange}
+            style={{ width: '100%', padding: '8px', border: '1px solid #ccc', borderRadius: '4px' }}
+          >
+            <option value="urban">Urban</option>
+            <option value="suburban">Suburban</option>
+            <option value="rural">Rural</option>
+          </select>
+        </div>
+
+        <button
+          type="submit"
+          style={{
+            backgroundColor: '#0073ea',
+            color: 'white',
+            padding: '12px 24px',
+            border: 'none',
+            borderRadius: '4px',
+            fontSize: '16px',
+            cursor: 'pointer',
+            width: '100%'
+          }}
+        >
+          Generate Estimate
+        </button>
+      </form>
+
+      <div style={{ marginTop: '20px', background: '#e8f4fd', padding: '15px', borderRadius: '8px' }}>
+        <h3>📊 Current Configuration:</h3>
+        <ul>
+          <li><strong>Monday Context:</strong> {context?.itemId || 'Not available'}</li>
+          <li><strong>Project Type:</strong> {formData.projectType}</li>
+          <li><strong>Square Footage:</strong> {formData.squareFootage || 'Not set'}</li>
+          <li><strong>Complexity:</strong> {formData.complexityLevel}</li>
+          <li><strong>Location:</strong> {formData.location}</li>
+        </ul>
+      </div>
+
+      <div style={{ marginTop: '20px', fontSize: '12px', color: '#666' }}>
+        <p>
+          <strong>Note:</strong> This is a demonstration version of ElectricalAI Pro. 
+          In production, this would connect to N8N workflows for AI-powered estimation, 
+          NEC compliance checking, and real-time material cost tracking.
+        </p>
+      </div>
+    </div>
+  );
+};
+
+export default ItemView;

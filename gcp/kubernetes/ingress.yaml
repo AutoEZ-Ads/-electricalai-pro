@@ -1,0 +1,259 @@
+# Ingress configuration for Electrical Estimation System
+# HTTPS load balancer with SSL termination and path-based routing
+
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: electrical-estimation-ingress
+  namespace: electrical-estimation
+  labels:
+    app: electrical-estimation
+    project: electrical-estimation
+  annotations:
+    # Google Cloud Load Balancer annotations
+    kubernetes.io/ingress.class: "gce"
+    kubernetes.io/ingress.global-static-ip-name: "electrical-est-lb-ip"
+    networking.gke.io/managed-certificates: "electrical-estimation-ssl"
+    kubernetes.io/ingress.allow-http: "false"
+    
+    # Security annotations
+    nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/ssl-protocols: "TLSv1.2 TLSv1.3"
+    nginx.ingress.kubernetes.io/ssl-ciphers: "ECDHE+AESGCM:ECDHE+CHACHA20:DHE+AESGCM:DHE+CHACHA20:!aNULL:!SHA1:!WEAK"
+    
+    # Performance annotations
+    nginx.ingress.kubernetes.io/proxy-body-size: "50m"
+    nginx.ingress.kubernetes.io/proxy-connect-timeout: "30"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "300"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "300"
+    
+    # Rate limiting
+    nginx.ingress.kubernetes.io/limit-rps: "100"
+    nginx.ingress.kubernetes.io/limit-rpm: "1000"
+    
+    # CORS configuration
+    nginx.ingress.kubernetes.io/enable-cors: "true"
+    nginx.ingress.kubernetes.io/cors-allow-origin: "https://electrical-estimation.example.com"
+    nginx.ingress.kubernetes.io/cors-allow-methods: "GET, POST, PUT, DELETE, OPTIONS"
+    nginx.ingress.kubernetes.io/cors-allow-headers: "DNT,X-CustomHeader,Keep-Alive,User-Agent,X-Requested-With,If-Modified-Since,Cache-Control,Content-Type,Authorization"
+    
+    # Backend protocol
+    cloud.google.com/backend-config: '{"default": "electrical-estimation-backendconfig"}'
+    
+spec:
+  rules:
+  - host: electrical-estimation.example.com
+    http:
+      paths:
+      # N8N Workflow Interface
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: n8n
+            port:
+              number: 80
+      
+      # API endpoints
+      - path: /api
+        pathType: Prefix
+        backend:
+          service:
+            name: backend-api
+            port:
+              number: 80
+      
+      # Health check endpoint
+      - path: /health
+        pathType: Exact
+        backend:
+          service:
+            name: backend-api
+            port:
+              number: 80
+      
+      # Webhook endpoints for N8N
+      - path: /webhook
+        pathType: Prefix
+        backend:
+          service:
+            name: n8n
+            port:
+              number: 80
+      
+      # Static assets (if served from backend)
+      - path: /static
+        pathType: Prefix
+        backend:
+          service:
+            name: backend-api
+            port:
+              number: 80
+
+---
+# Managed SSL Certificate
+apiVersion: networking.gke.io/v1
+kind: ManagedCertificate
+metadata:
+  name: electrical-estimation-ssl
+  namespace: electrical-estimation
+  labels:
+    app: electrical-estimation
+    project: electrical-estimation
+spec:
+  domains:
+  - electrical-estimation.example.com
+
+---
+# Backend Configuration for Google Cloud Load Balancer
+apiVersion: cloud.google.com/v1
+kind: BackendConfig
+metadata:
+  name: electrical-estimation-backendconfig
+  namespace: electrical-estimation
+  labels:
+    app: electrical-estimation
+    project: electrical-estimation
+spec:
+  # Health check configuration
+  healthCheck:
+    checkIntervalSec: 10
+    timeoutSec: 5
+    healthyThreshold: 1
+    unhealthyThreshold: 3
+    type: HTTP
+    requestPath: /health
+    port: 80
+  
+  # Session affinity
+  sessionAffinity:
+    affinityType: "CLIENT_IP"
+    affinityCookieTtlSec: 3600
+  
+  # Connection draining timeout
+  connectionDraining:
+    drainingTimeoutSec: 300
+  
+  # Security policy
+  securityPolicy:
+    name: "electrical-estimation-security-policy"
+  
+  # Cloud CDN configuration
+  cdn:
+    enabled: true
+    cachePolicy:
+      includeHost: true
+      includeProtocol: true
+      includeQueryString: false
+    negativeCaching: true
+    defaultTtl: 3600
+    maxTtl: 86400
+    clientTtl: 3600
+
+---
+# Frontend Configuration (if using separate frontend service)
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: electrical-estimation-frontend
+  namespace: electrical-estimation
+  labels:
+    app: electrical-estimation-frontend
+    project: electrical-estimation
+  annotations:
+    kubernetes.io/ingress.class: "gce"
+    kubernetes.io/ingress.global-static-ip-name: "electrical-est-frontend-ip"
+    networking.gke.io/managed-certificates: "electrical-estimation-frontend-ssl"
+    kubernetes.io/ingress.allow-http: "false"
+    
+    # Frontend-specific annotations
+    nginx.ingress.kubernetes.io/use-regex: "true"
+    nginx.ingress.kubernetes.io/rewrite-target: /$1
+    
+    # Static content caching
+    nginx.ingress.kubernetes.io/configuration-snippet: |
+      location ~* \.(js|css|png|jpg|jpeg|gif|ico|svg|woff|woff2|ttf|eot)$ {
+        expires 1y;
+        add_header Cache-Control "public, immutable";
+      }
+      
+      location / {
+        add_header X-Frame-Options DENY;
+        add_header X-Content-Type-Options nosniff;
+        add_header X-XSS-Protection "1; mode=block";
+        add_header Referrer-Policy "strict-origin-when-cross-origin";
+        add_header Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' data:; connect-src 'self' https://electrical-estimation.example.com;";
+      }
+
+spec:
+  rules:
+  - host: app.electrical-estimation.example.com
+    http:
+      paths:
+      - path: /(.*)
+        pathType: Prefix
+        backend:
+          service:
+            name: frontend
+            port:
+              number: 80
+
+---
+# Network Policy for Ingress Traffic
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: ingress-network-policy
+  namespace: electrical-estimation
+  labels:
+    app: electrical-estimation
+    project: electrical-estimation
+spec:
+  podSelector: {}
+  policyTypes:
+  - Ingress
+  ingress:
+  # Allow ingress from Google Cloud Load Balancer
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: gce-system
+  # Allow ingress from Istio ingress gateway
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: istio-system
+    - podSelector:
+        matchLabels:
+          app: istio-proxy
+  # Allow ingress from within namespace
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: electrical-estimation
+  ports:
+  - protocol: TCP
+    port: 80
+  - protocol: TCP
+    port: 443
+
+---
+# Cloud Armor Security Policy (referenced in BackendConfig)
+# This would typically be created via Terraform or gcloud CLI
+# Example configuration for reference:
+#
+# gcloud compute security-policies create electrical-estimation-security-policy \
+#   --description "Security policy for electrical estimation system"
+#
+# gcloud compute security-policies rules create 1000 \
+#   --security-policy electrical-estimation-security-policy \
+#   --expression "origin.region_code == 'US' || origin.region_code == 'CA'" \
+#   --action "allow"
+#
+# gcloud compute security-policies rules create 2000 \
+#   --security-policy electrical-estimation-security-policy \
+#   --expression "true" \
+#   --action "rate-based-ban" \
+#   --rate-limit-threshold-count 100 \
+#   --rate-limit-threshold-interval-sec 60 \
+#   --ban-duration-sec 300

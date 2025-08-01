@@ -1,0 +1,710 @@
+# Comprehensive Monitoring Dashboard for Electrical Estimation System
+# Production-grade Grafana dashboard configuration
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: prometheus-config
+  namespace: monitoring
+data:
+  prometheus.yml: |
+    global:
+      scrape_interval: 15s
+      evaluation_interval: 15s
+      external_labels:
+        cluster: 'electrical-estimation-prod'
+        region: 'us-central1'
+
+    rule_files:
+      - "/etc/prometheus/rules/*.yml"
+
+    scrape_configs:
+    # Electrical Calculator Service
+    - job_name: 'electrical-calculator'
+      static_configs:
+      - targets: ['electrical-calculator.electrical-estimation.svc.cluster.local:80']
+      metrics_path: /metrics
+      scrape_interval: 15s
+      scrape_timeout: 10s
+      scheme: http
+      relabel_configs:
+      - source_labels: [__address__]
+        target_label: instance
+      - source_labels: [__meta_kubernetes_pod_name]
+        target_label: pod
+      - source_labels: [__meta_kubernetes_namespace]
+        target_label: namespace
+
+    # N8N Workflow Engine
+    - job_name: 'n8n-workflows'
+      static_configs:
+      - targets: ['n8n.electrical-estimation.svc.cluster.local:5678']
+      metrics_path: /health
+      scrape_interval: 30s
+      scrape_timeout: 15s
+      honor_labels: false
+
+    # Edge Computing Nodes
+    - job_name: 'edge-processors'
+      kubernetes_sd_configs:
+      - role: pod
+        namespaces:
+          names: ['electrical-estimation']
+      relabel_configs:
+      - source_labels: [__meta_kubernetes_pod_label_app]
+        action: keep
+        regex: electrical-edge-processor
+      - source_labels: [__meta_kubernetes_pod_ip]
+        target_label: __address__
+        replacement: ${1}:9090
+
+    # Kubernetes Cluster Metrics
+    - job_name: 'kubernetes-pods'
+      kubernetes_sd_configs:
+      - role: pod
+      relabel_configs:
+      - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_scrape]
+        action: keep
+        regex: true
+      - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_path]
+        action: replace
+        target_label: __metrics_path__
+        regex: (.+)
+      - source_labels: [__address__, __meta_kubernetes_pod_annotation_prometheus_io_port]
+        action: replace
+        regex: ([^:]+)(?::\d+)?;(\d+)
+        replacement: $1:$2
+        target_label: __address__
+
+    # Redis Performance Metrics (using redis_exporter)
+    - job_name: 'redis-cache'
+      static_configs:
+      - targets: ['redis-exporter.electrical-estimation.svc.cluster.local:9121']
+      metrics_path: /metrics
+      scrape_interval: 30s
+      scrape_timeout: 10s
+
+    # PostgreSQL Database Metrics (using postgres_exporter)
+    - job_name: 'postgresql'
+      static_configs:
+      - targets: ['postgres-exporter.electrical-estimation.svc.cluster.local:9187']
+      metrics_path: /metrics
+      scrape_interval: 60s
+      scrape_timeout: 30s
+
+    # GKE Node Metrics
+    - job_name: 'kubernetes-nodes'
+      kubernetes_sd_configs:
+      - role: node
+      relabel_configs:
+      - action: labelmap
+        regex: __meta_kubernetes_node_label_(.+)
+      - target_label: __address__
+        replacement: kubernetes.default.svc:443
+      - source_labels: [__meta_kubernetes_node_name]
+        regex: (.+)
+        target_label: __metrics_path__
+        replacement: /api/v1/nodes/${1}/proxy/metrics
+
+  # Alert Rules for Electrical Estimation System
+  alert_rules.yml: |
+    groups:
+    - name: electrical_calculator_alerts
+      rules:
+      # High Error Rate Alert
+      - alert: ElectricalCalculatorHighErrorRate
+        expr: |
+          (
+            rate(http_requests_total{job="electrical-calculator",code=~"5.."}[5m]) /
+            rate(http_requests_total{job="electrical-calculator"}[5m])
+          ) > 0.05
+        for: 3m
+        labels:
+          severity: critical
+          service: electrical-calculator
+          team: engineering
+        annotations:
+          summary: "High error rate in electrical calculator service"
+          description: "Error rate is {{ $value | humanizePercentage }} on {{ $labels.instance }}"
+          runbook_url: "https://docs.electrical-estimation.com/runbooks/high-error-rate"
+
+      # High Response Time Alert
+      - alert: ElectricalCalculatorSlowResponse
+        expr: |
+          histogram_quantile(0.95, 
+            rate(http_request_duration_seconds_bucket{job="electrical-calculator"}[10m])
+          ) > 1.0
+        for: 5m
+        labels:
+          severity: warning
+          service: electrical-calculator
+          team: engineering
+        annotations:
+          summary: "Slow response times in electrical calculator"
+          description: "95th percentile response time is {{ $value | humanizeDuration }} on {{ $labels.instance }}"
+          runbook_url: "https://docs.electrical-estimation.com/runbooks/slow-response"
+
+      # Edge Computing Latency Alert
+      - alert: EdgeProcessingLatencyHigh
+        expr: |
+          avg_over_time(edge_processing_latency_ms[5m]) > 10
+        for: 2m
+        labels:
+          severity: warning
+          service: edge-processor
+          team: engineering
+        annotations:
+          summary: "Edge processing latency exceeds target"
+          description: "Average edge processing latency is {{ $value }}ms over the last 5 minutes, exceeding 10ms target"
+          runbook_url: "https://docs.electrical-estimation.com/runbooks/edge-latency"
+
+      # NEC Compliance Failure Alert
+      - alert: NECComplianceFailure
+        expr: |
+          increase(nec_compliance_failures_total[15m]) > 5
+        for: 2m
+        labels:
+          severity: critical
+          service: electrical-calculator
+          team: engineering
+          category: compliance
+        annotations:
+          summary: "NEC compliance validation failures detected"
+          description: "{{ $value }} NEC compliance failures in the last 15 minutes"
+          runbook_url: "https://docs.electrical-estimation.com/runbooks/nec-compliance"
+
+      # Memory Usage Alert
+      - alert: HighMemoryUsage
+        expr: |
+          (
+            container_memory_working_set_bytes{container="electrical-calculator"} /
+            container_spec_memory_limit_bytes{container="electrical-calculator"}
+          ) > 0.85
+        for: 10m
+        labels:
+          severity: warning
+          service: electrical-calculator
+          team: engineering
+          resource: memory
+        annotations:
+          summary: "High memory usage in electrical calculator"
+          description: "Memory usage is {{ $value | humanizePercentage }} on {{ $labels.pod }}"
+          runbook_url: "https://docs.electrical-estimation.com/runbooks/high-memory"
+
+      # CPU Usage Alert
+      - alert: HighCPUUsage
+        expr: |
+          (
+            rate(container_cpu_usage_seconds_total{container="electrical-calculator"}[5m]) /
+            container_spec_cpu_quota{container="electrical-calculator"} *
+            container_spec_cpu_period{container="electrical-calculator"}
+          ) > 0.80
+        for: 10m
+        labels:
+          severity: warning
+          service: electrical-calculator
+          team: engineering
+          resource: cpu
+        annotations:
+          summary: "High CPU usage in electrical calculator"
+          description: "CPU usage is {{ $value | humanizePercentage }} on {{ $labels.pod }}"
+          runbook_url: "https://docs.electrical-estimation.com/runbooks/high-cpu"
+
+    - name: n8n_workflow_alerts
+      rules:
+      # Workflow Failure Alert
+      - alert: N8NWorkflowFailures
+        expr: |
+          increase(n8n_workflow_executions_failed_total[10m]) > 3
+        for: 3m
+        labels:
+          severity: warning
+          service: n8n-workflows
+          team: engineering
+          category: workflow
+        annotations:
+          summary: "N8N workflow failures detected"
+          description: "{{ $value }} workflow failures in the last 10 minutes"
+          runbook_url: "https://docs.electrical-estimation.com/runbooks/workflow-failures"
+
+      # Long Running Workflows
+      - alert: N8NLongRunningWorkflows
+        expr: |
+          n8n_workflow_execution_duration_seconds > 600
+        for: 2m
+        labels:
+          severity: warning
+          service: n8n-workflows
+          team: engineering
+          category: performance
+        annotations:
+          summary: "Long running N8N workflow detected"
+          description: "Workflow {{ $labels.workflow_name }} has been running for {{ $value | humanizeDuration }}"
+          runbook_url: "https://docs.electrical-estimation.com/runbooks/long-workflows"
+
+    - name: infrastructure_alerts
+      rules:
+      # Pod Restart Alert
+      - alert: PodRestarting
+        expr: |
+          increase(kube_pod_container_status_restarts_total[15m]) > 2
+        for: 3m
+        labels:
+          severity: warning
+          team: engineering
+          category: infrastructure
+        annotations:
+          summary: "Pod is restarting frequently"
+          description: "Pod {{ $labels.pod }} in namespace {{ $labels.namespace }} has restarted {{ $value }} times in the last 15 minutes"
+          runbook_url: "https://docs.electrical-estimation.com/runbooks/pod-restarts"
+
+      # Disk Space Alert
+      - alert: LowDiskSpace
+        expr: |
+          (
+            node_filesystem_avail_bytes{fstype!="tmpfs",fstype!="overlay"} /
+            node_filesystem_size_bytes{fstype!="tmpfs",fstype!="overlay"}
+          ) < 0.15
+        for: 10m
+        labels:
+          severity: critical
+          team: engineering
+          category: infrastructure
+        annotations:
+          summary: "Low disk space on node"
+          description: "Disk space is {{ $value | humanizePercentage }} available on {{ $labels.instance }} ({{ $labels.mountpoint }})"
+          runbook_url: "https://docs.electrical-estimation.com/runbooks/disk-space"
+
+      # Redis Connection Alert
+      - alert: RedisConnectionFailure
+        expr: |
+          redis_up == 0
+        for: 2m
+        labels:
+          severity: critical
+          service: redis-cache
+          team: engineering
+          category: database
+        annotations:
+          summary: "Redis connection failure"
+          description: "Redis instance {{ $labels.instance }} is down"
+          runbook_url: "https://docs.electrical-estimation.com/runbooks/redis-down"
+
+      # Redis High Memory Usage
+      - alert: RedisHighMemoryUsage
+        expr: |
+          (
+            redis_memory_used_bytes / redis_memory_max_bytes
+          ) > 0.90
+        for: 5m
+        labels:
+          severity: warning
+          service: redis-cache
+          team: engineering
+          resource: memory
+        annotations:
+          summary: "Redis high memory usage"
+          description: "Redis memory usage is {{ $value | humanizePercentage }} on {{ $labels.instance }}"
+          runbook_url: "https://docs.electrical-estimation.com/runbooks/redis-memory"
+
+---
+# Grafana Dashboard Configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-dashboard-electrical
+  namespace: monitoring
+  labels:
+    grafana_dashboard: "1"
+data:
+  electrical-estimation-dashboard.json: |
+    {
+      "dashboard": {
+        "id": null,
+        "title": "Electrical Estimation System - Production Dashboard",
+        "tags": ["electrical", "estimation", "nec", "production"],
+        "timezone": "UTC",
+        "refresh": "30s",
+        "time": {
+          "from": "now-1h",
+          "to": "now"
+        },
+        "panels": [
+          {
+            "id": 1,
+            "title": "System Overview",
+            "type": "stat",
+            "targets": [
+              {
+                "expr": "up{job=\"electrical-calculator\"}",
+                "legendFormat": "Calculator Service",
+                "interval": "30s",
+                "refId": "A"
+              },
+              {
+                "expr": "up{job=\"n8n-workflows\"}",
+                "legendFormat": "N8N Workflows",
+                "interval": "30s",
+                "refId": "B"
+              },
+              {
+                "expr": "up{job=\"edge-processors\"}",
+                "legendFormat": "Edge Processors",
+                "interval": "30s",
+                "refId": "C"
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "color": {
+                  "mode": "thresholds"
+                },
+                "thresholds": {
+                  "steps": [
+                    {"color": "red", "value": 0},
+                    {"color": "green", "value": 1}
+                  ]
+                }
+              }
+            },
+            "gridPos": {"h": 6, "w": 24, "x": 0, "y": 0}
+          },
+          {
+            "id": 2,
+            "title": "Request Rate (req/sec)",
+            "type": "graph",
+            "targets": [
+              {
+                "expr": "electrical:calculation_rate_5m",
+                "legendFormat": "{{method}} - {{handler}}",
+                "interval": "15s",
+                "refId": "A"
+              },
+              {
+                "expr": "electrical:error_rate_5m",
+                "legendFormat": "Errors - {{code}}",
+                "interval": "15s",
+                "refId": "B"
+              }
+            ],
+            "yAxes": [
+              {
+                "label": "Requests/sec",
+                "min": 0
+              }
+            ],
+            "gridPos": {"h": 8, "w": 12, "x": 0, "y": 6}
+          },
+          {
+            "id": 3,
+            "title": "Response Time (95th percentile)",
+            "type": "graph",
+            "targets": [
+              {
+                "expr": "electrical:response_time_p95_5m",
+                "legendFormat": "95th percentile",
+                "interval": "15s",
+                "refId": "A"
+              },
+              {
+                "expr": "electrical:response_time_p50_5m",
+                "legendFormat": "50th percentile",
+                "interval": "15s",
+                "refId": "B"
+              },
+              {
+                "expr": "avg(rate(http_request_duration_seconds_sum{job=\"electrical-calculator\"}[5m]) / rate(http_requests_total{job=\"electrical-calculator\"}[5m]))",
+                "legendFormat": "Average",
+                "interval": "15s",
+                "refId": "C"
+              }
+            ],
+            "yAxes": [
+              {
+                "label": "Seconds",
+                "min": 0
+              }
+            ],
+            "gridPos": {"h": 8, "w": 12, "x": 12, "y": 6}
+          },
+          {
+            "id": 4,
+            "title": "Edge Computing Performance",
+            "type": "graph",
+            "targets": [
+              {
+                "expr": "avg(edge_processing_latency_ms)",
+                "legendFormat": "Average Latency"
+              },
+              {
+                "expr": "max(edge_processing_latency_ms)",
+                "legendFormat": "Max Latency"
+              }
+            ],
+            "yAxes": [
+              {
+                "label": "Milliseconds",
+                "min": 0,
+                "max": 10
+              }
+            ],
+            "thresholds": [
+              {
+                "value": 5,
+                "colorMode": "critical",
+                "op": "gt"
+              }
+            ],
+            "gridPos": {"h": 8, "w": 12, "x": 0, "y": 14}
+          },
+          {
+            "id": 5,
+            "title": "NEC Compliance Metrics",
+            "type": "stat",
+            "targets": [
+              {
+                "expr": "rate(nec_compliance_validations_total[5m])",
+                "legendFormat": "Validations/sec"
+              },
+              {
+                "expr": "rate(nec_compliance_failures_total[5m])",
+                "legendFormat": "Failures/sec"
+              },
+              {
+                "expr": "(rate(nec_compliance_validations_total[5m]) - rate(nec_compliance_failures_total[5m])) / rate(nec_compliance_validations_total[5m]) * 100",
+                "legendFormat": "Success Rate %"
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "color": {
+                  "mode": "thresholds"
+                },
+                "thresholds": {
+                  "steps": [
+                    {"color": "red", "value": 0},
+                    {"color": "yellow", "value": 95},
+                    {"color": "green", "value": 99}
+                  ]
+                },
+                "unit": "percent"
+              }
+            },
+            "gridPos": {"h": 8, "w": 12, "x": 12, "y": 14}
+          },
+          {
+            "id": 6,
+            "title": "Error Rate by Endpoint",
+            "type": "graph",
+            "targets": [
+              {
+                "expr": "rate(http_requests_total{job=\"electrical-calculator\",status=~\"4..|5..\"}[5m])",
+                "legendFormat": "{{endpoint}} - {{status}}"
+              }
+            ],
+            "yAxes": [
+              {
+                "label": "Errors/sec",
+                "min": 0
+              }
+            ],
+            "gridPos": {"h": 8, "w": 12, "x": 0, "y": 22}
+          },
+          {
+            "id": 7,
+            "title": "Resource Utilization",
+            "type": "graph",
+            "targets": [
+              {
+                "expr": "rate(container_cpu_usage_seconds_total{container=\"electrical-calculator\"}[5m]) * 100",
+                "legendFormat": "CPU %"
+              },
+              {
+                "expr": "container_memory_usage_bytes{container=\"electrical-calculator\"} / container_spec_memory_limit_bytes * 100",
+                "legendFormat": "Memory %"
+              }
+            ],
+            "yAxes": [
+              {
+                "label": "Percentage",
+                "min": 0,
+                "max": 100
+              }
+            ],
+            "gridPos": {"h": 8, "w": 12, "x": 12, "y": 22}
+          },
+          {
+            "id": 8,
+            "title": "Cache Performance",
+            "type": "graph",
+            "targets": [
+              {
+                "expr": "rate(redis_cache_hits_total[5m])",
+                "legendFormat": "Cache Hits/sec"
+              },
+              {
+                "expr": "rate(redis_cache_misses_total[5m])",
+                "legendFormat": "Cache Misses/sec"
+              },
+              {
+                "expr": "rate(redis_cache_hits_total[5m]) / (rate(redis_cache_hits_total[5m]) + rate(redis_cache_misses_total[5m])) * 100",
+                "legendFormat": "Hit Rate %"
+              }
+            ],
+            "yAxes": [
+              {
+                "label": "Rate",
+                "min": 0
+              }
+            ],
+            "gridPos": {"h": 8, "w": 24, "x": 0, "y": 30}
+          }
+        ]
+      }
+    }
+
+---
+# Alert Manager Configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: alertmanager-config
+  namespace: monitoring
+data:
+  alertmanager.yml: |
+    global:
+      smtp_smarthost: 'smtp.gmail.com:587'
+      smtp_from: 'alerts@electrical-estimation.com'
+      smtp_auth_username: 'alerts@electrical-estimation.com'
+      smtp_auth_password: 'YOUR_EMAIL_PASSWORD'
+
+    route:
+      group_by: ['alertname', 'service']
+      group_wait: 10s
+      group_interval: 10s
+      repeat_interval: 1m
+      receiver: 'web.hook'
+      routes:
+      - match:
+          severity: critical
+        receiver: 'critical-alerts'
+      - match:
+          severity: warning
+        receiver: 'warning-alerts'
+
+    receivers:
+    - name: 'web.hook'
+      webhook_configs:
+      - url: 'http://webhook-service:5000/alert'
+
+    - name: 'critical-alerts'
+      email_configs:
+      - to: 'ops-team@electrical-estimation.com'
+        subject: 'CRITICAL: {{ .GroupLabels.alertname }}'
+        body: |
+          {{ range .Alerts }}
+          Alert: {{ .Annotations.summary }}
+          Description: {{ .Annotations.description }}
+          Service: {{ .Labels.service }}
+          Instance: {{ .Labels.instance }}
+          {{ end }}
+      slack_configs:
+      - api_url: 'YOUR_SLACK_WEBHOOK_URL'
+        channel: '#alerts-critical'
+        title: 'Critical Alert: {{ .GroupLabels.alertname }}'
+        text: |
+          {{ range .Alerts }}
+          {{ .Annotations.summary }}
+          {{ .Annotations.description }}
+          {{ end }}
+
+    - name: 'warning-alerts'
+      email_configs:
+      - to: 'dev-team@electrical-estimation.com'
+        subject: 'WARNING: {{ .GroupLabels.alertname }}'
+        body: |
+          {{ range .Alerts }}
+          Alert: {{ .Annotations.summary }}
+          Description: {{ .Annotations.description }}
+          {{ end }}
+
+    inhibit_rules:
+    - source_match:
+        severity: 'critical'
+      target_match:
+        severity: 'warning'
+      equal: ['alertname', 'service', 'instance']
+
+---
+# Prometheus Service Monitor for Electrical Calculator
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: electrical-calculator-monitor
+  namespace: monitoring
+  labels:
+    app: electrical-calculator
+spec:
+  selector:
+    matchLabels:
+      app: electrical-calculator
+  endpoints:
+  - port: metrics
+    interval: 15s
+    path: /metrics
+    honorLabels: true
+    scrapeTimeout: 10s
+
+---
+# Prometheus Rule for Custom Metrics
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: electrical-estimation-rules
+  namespace: monitoring
+spec:
+  groups:
+  - name: electrical.rules
+    rules:
+    # Electrical service metrics
+    - record: electrical:calculation_rate_5m
+      expr: rate(http_requests_total{job="electrical-calculator",method="POST"}[5m])
+    - record: electrical:error_rate_5m
+      expr: rate(http_requests_total{job="electrical-calculator",code=~"5.."}[5m])
+    - record: electrical:success_rate_5m
+      expr: |
+        (
+          rate(http_requests_total{job="electrical-calculator",code=~"2.."}[5m]) /
+          rate(http_requests_total{job="electrical-calculator"}[5m])
+        ) * 100
+    - record: electrical:response_time_p95_5m
+      expr: |
+        histogram_quantile(0.95,
+          rate(http_request_duration_seconds_bucket{job="electrical-calculator"}[5m])
+        )
+    - record: electrical:response_time_p50_5m
+      expr: |
+        histogram_quantile(0.50,
+          rate(http_request_duration_seconds_bucket{job="electrical-calculator"}[5m])
+        )
+    
+    # NEC compliance metrics
+    - record: electrical:nec_compliance_rate_5m
+      expr: |
+        (
+          rate(nec_compliance_validations_total[5m]) -
+          rate(nec_compliance_failures_total[5m])
+        ) / rate(nec_compliance_validations_total[5m]) * 100
+    
+    # Resource utilization aggregations
+    - record: electrical:cpu_usage_avg
+      expr: |
+        avg(
+          rate(container_cpu_usage_seconds_total{container="electrical-calculator"}[5m])
+        )
+    - record: electrical:memory_usage_avg
+      expr: |
+        avg(
+          container_memory_working_set_bytes{container="electrical-calculator"} /
+          container_spec_memory_limit_bytes{container="electrical-calculator"}
+        ) * 100

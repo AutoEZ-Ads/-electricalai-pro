@@ -1,0 +1,240 @@
+# Role-Based Access Control (RBAC) for Electrical Estimation System
+# Production-grade security policies
+
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: electrical-estimation-service
+  namespace: electrical-estimation
+  annotations:
+    iam.gke.io/gcp-service-account: electrical-estimation-gsa@PROJECT_ID.iam.gserviceaccount.com
+automountServiceAccountToken: true
+
+---
+# ClusterRole for electrical services
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: electrical-estimation-role
+rules:
+# Allow reading ConfigMaps and Secrets
+- apiGroups: [""]
+  resources: ["configmaps", "secrets"]
+  verbs: ["get", "list", "watch"]
+# Allow pod management for auto-scaling
+- apiGroups: [""]
+  resources: ["pods"]
+  verbs: ["get", "list", "watch"]
+# Allow service discovery
+- apiGroups: [""]
+  resources: ["services", "endpoints"]
+  verbs: ["get", "list", "watch"]
+# Allow metrics collection
+- apiGroups: ["metrics.k8s.io"]
+  resources: ["pods", "nodes"]
+  verbs: ["get", "list"]
+
+---
+# ClusterRoleBinding
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: electrical-estimation-binding
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: electrical-estimation-role
+subjects:
+- kind: ServiceAccount
+  name: electrical-estimation-service
+  namespace: electrical-estimation
+
+---
+# NetworkPolicy for service isolation
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: electrical-estimation-network-policy
+  namespace: electrical-estimation
+spec:
+  podSelector:
+    matchLabels:
+      app: electrical-calculator
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  # Allow ingress from nginx-ingress
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: ingress-nginx
+    ports:
+    - protocol: TCP
+      port: 3002
+  # Allow ingress from same namespace
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: electrical-estimation
+    ports:
+    - protocol: TCP
+      port: 3002
+  # Allow health checks
+  - from: []
+    ports:
+    - protocol: TCP
+      port: 3002
+  egress:
+  # Allow DNS resolution
+  - to: []
+    ports:
+    - protocol: UDP
+      port: 53
+  # Allow database connections
+  - to: []
+    ports:
+    - protocol: TCP
+      port: 5432
+  # Allow Redis connections
+  - to: []
+    ports:
+    - protocol: TCP
+      port: 6379
+  # Allow HTTPS outbound
+  - to: []
+    ports:
+    - protocol: TCP
+      port: 443
+
+---
+# PodSecurityPolicy for enhanced security
+apiVersion: policy/v1beta1
+kind: PodSecurityPolicy
+metadata:
+  name: electrical-estimation-psp
+spec:
+  privileged: false
+  allowPrivilegeEscalation: false
+  requiredDropCapabilities:
+    - ALL
+  volumes:
+    - 'configMap'
+    - 'emptyDir'
+    - 'projected'
+    - 'secret'
+    - 'downwardAPI'
+    - 'persistentVolumeClaim'
+  runAsUser:
+    rule: 'MustRunAsNonRoot'
+  seLinux:
+    rule: 'RunAsAny'
+  fsGroup:
+    rule: 'RunAsAny'
+
+---
+# Secret for database credentials
+apiVersion: v1
+kind: Secret
+metadata:
+  name: database-credentials
+  namespace: electrical-estimation
+type: Opaque
+data:
+  username: bjhuX3VzZXI=  # n8n_user (base64)
+  password: ""  # Will be populated by deployment script
+
+---
+# Secret for N8N configuration
+apiVersion: v1
+kind: Secret
+metadata:
+  name: n8n-credentials
+  namespace: electrical-estimation
+type: Opaque
+data:
+  username: YWRtaW4=  # admin (base64)
+  password: ""  # Will be populated by deployment script
+  encryption_key: ""  # Will be populated by deployment script
+
+---
+# ConfigMap for security headers
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: security-config
+  namespace: electrical-estimation
+data:
+  nginx.conf: |
+    server {
+        listen 80;
+        server_name _;
+        
+        # Security headers
+        add_header X-Frame-Options "SAMEORIGIN" always;
+        add_header X-Content-Type-Options "nosniff" always;
+        add_header X-XSS-Protection "1; mode=block" always;
+        add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+        add_header Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:;" always;
+        add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+        
+        # Rate limiting
+        limit_req_zone $binary_remote_addr zone=api:10m rate=100r/m;
+        limit_req_zone $binary_remote_addr zone=login:10m rate=5r/m;
+        
+        location /api/ {
+            limit_req zone=api burst=20 nodelay;
+            proxy_pass http://electrical-calculator:80;
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+        }
+        
+        location /auth/ {
+            limit_req zone=login burst=5 nodelay;
+            proxy_pass http://n8n:80;
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+        }
+        
+        location / {
+            proxy_pass http://n8n:80;
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+        }
+    }
+
+---
+# Certificate management
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: electrical-estimation-tls
+  namespace: electrical-estimation
+spec:
+  secretName: electrical-estimation-tls-secret
+  issuerRef:
+    name: letsencrypt-prod
+    kind: ClusterIssuer
+  dnsNames:
+  - DOMAIN_NAME  # Will be replaced by deployment script
+
+---
+# ClusterIssuer for Let's Encrypt
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: letsencrypt-prod
+spec:
+  acme:
+    server: https://acme-v02.api.letsencrypt.org/directory
+    email: admin@DOMAIN_NAME  # Will be replaced by deployment script
+    privateKeySecretRef:
+      name: letsencrypt-prod
+    solvers:
+    - http01:
+        ingress:
+          class: nginx

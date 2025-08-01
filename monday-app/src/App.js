@@ -1,1 +1,187 @@
-import React, { useEffect, useState } from 'react';\nimport { BrowserRouter as Router, Routes, Route } from 'react-router-dom';\nimport mondaySdk from 'monday-sdk-js';\nimport { QueryClient, QueryClientProvider } from 'react-query';\nimport { ThemeProvider } from 'styled-components';\nimport { VibeProvider } from '@vibe/core';\n\n// Import components\nimport ItemView from './components/ItemView';\nimport BoardView from './components/BoardView';\nimport IntegrationView from './components/IntegrationView';\nimport LoadingSpinner from './components/LoadingSpinner';\nimport ErrorBoundary from './components/ErrorBoundary';\n\n// Import services\nimport { MondayService } from './services/MondayService';\nimport { N8NService } from './services/N8NService';\nimport { AuthService } from './services/AuthService';\n\n// Import contexts\nimport { AppContextProvider } from './contexts/AppContext';\nimport { AuthContextProvider } from './contexts/AuthContext';\n\n// Import styles\nimport './App.css';\nimport 'monday-ui-react-core/tokens';\n\n// Initialize Monday SDK\nconst monday = mondaySdk();\n\n// Create React Query client\nconst queryClient = new QueryClient({\n  defaultOptions: {\n    queries: {\n      retry: 3,\n      staleTime: 5 * 60 * 1000, // 5 minutes\n      cacheTime: 10 * 60 * 1000, // 10 minutes\n    },\n  },\n});\n\nfunction App() {\n  const [isLoading, setIsLoading] = useState(true);\n  const [context, setContext] = useState(null);\n  const [user, setUser] = useState(null);\n  const [settings, setSettings] = useState(null);\n  const [error, setError] = useState(null);\n\n  useEffect(() => {\n    initializeApp();\n  }, []);\n\n  const initializeApp = async () => {\n    try {\n      console.log('🚀 Initializing ElectricalAI Pro Monday App');\n      \n      // Initialize Monday SDK\n      monday.setToken(process.env.REACT_APP_MONDAY_API_TOKEN);\n      \n      // Get context from Monday\n      const contextData = await monday.get('context');\n      console.log('📊 Monday Context:', contextData);\n      \n      // Get user information\n      const userData = await monday.api('query { me { id name email } }');\n      console.log('👤 User Data:', userData);\n      \n      // Get app settings\n      const settingsData = await monday.get('settings');\n      console.log('⚙️ App Settings:', settingsData);\n      \n      // Initialize services\n      MondayService.initialize(monday);\n      N8NService.initialize({\n        baseUrl: settingsData.n8n_instance_url || process.env.REACT_APP_N8N_WEBHOOK_BASE,\n        apiKey: settingsData.api_key || process.env.REACT_APP_ELECTRICALAI_API_KEY\n      });\n      AuthService.initialize(monday);\n      \n      // Set state\n      setContext(contextData.data);\n      setUser(userData.data.me);\n      setSettings(settingsData.data);\n      \n      console.log('✅ App initialized successfully');\n      \n    } catch (error) {\n      console.error('❌ App initialization failed:', error);\n      setError(error.message || 'Failed to initialize app');\n    } finally {\n      setIsLoading(false);\n    }\n  };\n\n  const handleError = (error, errorInfo) => {\n    console.error('🚨 App Error:', error, errorInfo);\n    setError(error.message);\n  };\n\n  if (isLoading) {\n    return (\n      <VibeProvider>\n        <div className=\"app-loading\">\n          <LoadingSpinner size=\"large\" />\n          <p>Initializing ElectricalAI Pro...</p>\n        </div>\n      </VibeProvider>\n    );\n  }\n\n  if (error) {\n    return (\n      <VibeProvider>\n        <div className=\"app-error\">\n          <h2>🚨 Application Error</h2>\n          <p>{error}</p>\n          <button onClick={initializeApp}>Retry</button>\n        </div>\n      </VibeProvider>\n    );\n  }\n\n  return (\n    <ErrorBoundary onError={handleError}>\n      <VibeProvider>\n        <QueryClientProvider client={queryClient}>\n          <AuthContextProvider user={user}>\n            <AppContextProvider \n              context={context} \n              settings={settings}\n              monday={monday}\n            >\n              <Router>\n                <div className=\"app\">\n                  <Routes>\n                    {/* Item View - Project Estimator */}\n                    <Route \n                      path=\"/item-view\" \n                      element={\n                        <ItemView \n                          context={context}\n                          settings={settings}\n                          monday={monday}\n                        />\n                      } \n                    />\n                    \n                    {/* Board View - Estimation Dashboard */}\n                    <Route \n                      path=\"/board-view\" \n                      element={\n                        <BoardView \n                          context={context}\n                          settings={settings}\n                          monday={monday}\n                        />\n                      } \n                    />\n                    \n                    {/* Integration View - Workflow Configuration */}\n                    <Route \n                      path=\"/integration-view\" \n                      element={\n                        <IntegrationView \n                          context={context}\n                          settings={settings}\n                          monday={monday}\n                        />\n                      } \n                    />\n                    \n                    {/* Default Route */}\n                    <Route \n                      path=\"/\" \n                      element={\n                        <ItemView \n                          context={context}\n                          settings={settings}\n                          monday={monday}\n                        />\n                      } \n                    />\n                  </Routes>\n                </div>\n              </Router>\n            </AppContextProvider>\n          </AuthContextProvider>\n        </QueryClientProvider>\n      </VibeProvider>\n    </ErrorBoundary>\n  );\n}\n\nexport default App;
+import React, { useEffect, useState } from 'react';
+import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
+import mondaySdk from 'monday-sdk-js';
+import { QueryClient, QueryClientProvider } from 'react-query';
+import { ThemeProvider } from 'styled-components';
+import { MondayProvider } from 'monday-ui-react-core';
+
+// Import components
+import ItemView from './components/ItemView';
+import BoardView from './components/BoardView';
+import IntegrationView from './components/IntegrationView';
+import LoadingSpinner from './components/LoadingSpinner';
+import ErrorBoundary from './components/ErrorBoundary';
+
+// Import services
+import { MondayService } from './services/MondayService';
+import { N8NService } from './services/N8NService';
+import { AuthService } from './services/AuthService';
+
+// Import contexts
+import { AppContextProvider } from './contexts/AppContext';
+import { AuthContextProvider } from './contexts/AuthContext';
+
+// Import styles
+import './App.css';
+
+// Initialize Monday SDK
+const monday = mondaySdk();
+
+// Create React Query client
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      retry: 3,
+      staleTime: 5 * 60 * 1000, // 5 minutes
+      cacheTime: 10 * 60 * 1000, // 10 minutes
+    },
+  },
+});
+
+function App() {
+  const [isLoading, setIsLoading] = useState(true);
+  const [context, setContext] = useState(null);
+  const [user, setUser] = useState(null);
+  const [settings, setSettings] = useState(null);
+  const [error, setError] = useState(null);
+
+  useEffect(() => {
+    initializeApp();
+  }, []);
+
+  const initializeApp = async () => {
+    try {
+      console.log('Initializing ElectricalAI Pro Monday App');
+      
+      // Initialize Monday SDK
+      monday.setToken(process.env.REACT_APP_MONDAY_API_TOKEN);
+      
+      // Get context from Monday
+      const contextData = await monday.get('context');
+      console.log('Monday Context:', contextData);
+      
+      // Get user information
+      const userData = await monday.api('query { me { id name email } }');
+      console.log('User Data:', userData);
+      
+      // Get app settings
+      const settingsData = await monday.get('settings');
+      console.log('App Settings:', settingsData);
+      
+      // Initialize services
+      MondayService.initialize(monday);
+      N8NService.initialize({
+        baseUrl: settingsData.n8n_instance_url || process.env.REACT_APP_N8N_WEBHOOK_BASE,
+        apiKey: settingsData.api_key || process.env.REACT_APP_ELECTRICALAI_API_KEY
+      });
+      AuthService.initialize(monday);
+      
+      // Set state
+      setContext(contextData.data);
+      setUser(userData.data.me);
+      setSettings(settingsData.data);
+      
+      console.log('App initialized successfully');
+      
+    } catch (error) {
+      console.error('App initialization failed:', error);
+      setError(error.message || 'Failed to initialize app');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleError = (error, errorInfo) => {
+    console.error('App Error:', error, errorInfo);
+    setError(error.message);
+  };
+
+  if (isLoading) {
+    return (
+      <div className="app-loading">
+        <LoadingSpinner size="large" />
+        <p>Initializing ElectricalAI Pro...</p>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="app-error">
+        <h2>Application Error</h2>
+        <p>{error}</p>
+        <button onClick={initializeApp}>Retry</button>
+      </div>
+    );
+  }
+
+  return (
+    <ErrorBoundary onError={handleError}>
+      <QueryClientProvider client={queryClient}>
+        <AuthContextProvider user={user}>
+          <AppContextProvider 
+            context={context} 
+            settings={settings}
+            monday={monday}
+          >
+            <Router>
+              <div className="app">
+                <Routes>
+                  {/* Item View - Project Estimator */}
+                  <Route 
+                    path="/item-view" 
+                    element={
+                      <ItemView 
+                        context={context}
+                        settings={settings}
+                        monday={monday}
+                      />
+                    } 
+                  />
+                  
+                  {/* Board View - Estimation Dashboard */}
+                  <Route 
+                    path="/board-view" 
+                    element={
+                      <BoardView 
+                        context={context}
+                        settings={settings}
+                        monday={monday}
+                      />
+                    } 
+                  />
+                  
+                  {/* Integration View - Workflow Configuration */}
+                  <Route 
+                    path="/integration-view" 
+                    element={
+                      <IntegrationView 
+                        context={context}
+                        settings={settings}
+                        monday={monday}
+                      />
+                    } 
+                  />
+                  
+                  {/* Default Route */}
+                  <Route 
+                    path="/" 
+                    element={
+                      <ItemView 
+                        context={context}
+                        settings={settings}
+                        monday={monday}
+                      />
+                    } 
+                  />
+                </Routes>
+              </div>
+            </Router>
+          </AppContextProvider>
+        </AuthContextProvider>
+      </QueryClientProvider>
+    </ErrorBoundary>
+  );
+}
+
+export default App;

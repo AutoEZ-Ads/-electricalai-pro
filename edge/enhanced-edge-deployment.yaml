@@ -1,0 +1,935 @@
+# Enhanced Edge Computing Deployment for Electrical Estimation System
+# Comprehensive edge infrastructure with IoT management, data sync, and remote site support
+
+---
+# Edge Device Management Controller
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: edge-device-manager
+  namespace: electrical-estimation
+  labels:
+    app: edge-device-manager
+    tier: edge-management
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: edge-device-manager
+  template:
+    metadata:
+      labels:
+        app: edge-device-manager
+        tier: edge-management
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8081"
+        prometheus.io/path: "/metrics"
+    spec:
+      serviceAccountName: electrical-edge-service
+      priorityClassName: high-priority
+      containers:
+      - name: device-manager
+        image: gcr.io/PROJECT_ID/edge-device-manager:latest
+        ports:
+        - name: http
+          containerPort: 8081
+        - name: mqtt
+          containerPort: 1883
+        - name: coap
+          containerPort: 5683
+        - name: metrics
+          containerPort: 9091
+        env:
+        - name: DEVICE_REGISTRY_ENDPOINT
+          value: "https://cloudiot.googleapis.com/v1"
+        - name: MQTT_BROKER_URL
+          value: "mqtt://edge-mqtt-broker:1883"
+        - name: EDGE_DATA_SYNC_INTERVAL
+          value: "30s"
+        - name: OFFLINE_BUFFER_SIZE
+          value: "10000"
+        - name: ENABLE_DEVICE_MONITORING
+          value: "true"
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "250m"
+          limits:
+            memory: "1Gi"
+            cpu: "500m"
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          runAsNonRoot: true
+          runAsUser: 1001
+        volumeMounts:
+        - name: device-cache
+          mountPath: /app/cache
+        - name: certificates
+          mountPath: /app/certs
+          readOnly: true
+        - name: tmp
+          mountPath: /tmp
+      volumes:
+      - name: device-cache
+        emptyDir:
+          sizeLimit: 2Gi
+      - name: certificates
+        secret:
+          secretName: edge-device-certificates
+      - name: tmp
+        emptyDir:
+          sizeLimit: 500Mi
+
+---
+# IoT MQTT Broker for device communication
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: edge-mqtt-broker
+  namespace: electrical-estimation
+  labels:
+    app: edge-mqtt-broker
+    tier: iot-communication
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: edge-mqtt-broker
+  template:
+    metadata:
+      labels:
+        app: edge-mqtt-broker
+        tier: iot-communication
+    spec:
+      containers:
+      - name: mqtt-broker
+        image: eclipse-mosquitto:2.0
+        ports:
+        - name: mqtt
+          containerPort: 1883
+        - name: mqtt-tls
+          containerPort: 8883
+        - name: websocket
+          containerPort: 9001
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "100m"
+          limits:
+            memory: "512Mi"
+            cpu: "200m"
+        volumeMounts:
+        - name: mqtt-config
+          mountPath: /mosquitto/config
+        - name: mqtt-data
+          mountPath: /mosquitto/data
+        - name: mqtt-logs
+          mountPath: /mosquitto/log
+        - name: certificates
+          mountPath: /mosquitto/certs
+          readOnly: true
+      volumes:
+      - name: mqtt-config
+        configMap:
+          name: mqtt-broker-config
+      - name: mqtt-data
+        persistentVolumeClaim:
+          claimName: mqtt-data-pvc
+      - name: mqtt-logs
+        emptyDir:
+          sizeLimit: 1Gi
+      - name: certificates
+        secret:
+          secretName: mqtt-tls-certificates
+
+---
+# Edge Data Synchronization Service
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: edge-data-sync
+  namespace: electrical-estimation
+  labels:
+    app: edge-data-sync
+    tier: data-synchronization
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: edge-data-sync
+  template:
+    metadata:
+      labels:
+        app: edge-data-sync
+        tier: data-synchronization
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8082"
+    spec:
+      serviceAccountName: electrical-edge-service
+      containers:
+      - name: data-sync
+        image: gcr.io/PROJECT_ID/edge-data-sync:latest
+        ports:
+        - name: http
+          containerPort: 8082
+        - name: grpc
+          containerPort: 9092
+        - name: metrics
+          containerPort: 9093
+        env:
+        - name: SYNC_MODE
+          value: "bidirectional"
+        - name: CONFLICT_RESOLUTION
+          value: "latest-wins"
+        - name: BATCH_SIZE
+          value: "1000"
+        - name: SYNC_INTERVAL
+          value: "60s"
+        - name: OFFLINE_THRESHOLD
+          value: "300s"
+        - name: ENABLE_COMPRESSION
+          value: "true"
+        - name: ENABLE_ENCRYPTION
+          value: "true"
+        - name: CLOUD_ENDPOINT
+          value: "https://api.electrical-estimation.com"
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "200m"
+          limits:
+            memory: "1Gi"
+            cpu: "400m"
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          runAsNonRoot: true
+          runAsUser: 1002
+        volumeMounts:
+        - name: sync-buffer
+          mountPath: /app/buffer
+        - name: sync-logs
+          mountPath: /app/logs
+        - name: tmp
+          mountPath: /tmp
+      volumes:
+      - name: sync-buffer
+        persistentVolumeClaim:
+          claimName: sync-buffer-pvc
+      - name: sync-logs
+        emptyDir:
+          sizeLimit: 1Gi
+      - name tmp
+        emptyDir:
+          sizeLimit: 500Mi
+
+---
+# Remote Site Configuration Manager
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: remote-site-manager
+  namespace: electrical-estimation
+  labels:
+    app: remote-site-manager
+    tier: site-management
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: remote-site-manager
+  template:
+    metadata:
+      labels:
+        app: remote-site-manager
+        tier: site-management
+    spec:
+      serviceAccountName: electrical-edge-service
+      containers:
+      - name: site-manager
+        image: gcr.io/PROJECT_ID/remote-site-manager:latest
+        ports:
+        - name: http
+          containerPort: 8083
+        - name: ssh
+          containerPort: 2222
+        env:
+        - name: SITE_CONFIG_ENDPOINT
+          value: "gs://PROJECT_ID-site-configs"
+        - name: CONFIG_SYNC_INTERVAL
+          value: "300s"
+        - name: ENABLE_AUTO_DEPLOYMENT
+          value: "true"
+        - name: HEALTH_CHECK_INTERVAL
+          value: "60s"
+        - name: SITE_MONITORING_ENABLED
+          value: "true"
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "100m"
+          limits:
+            memory: "512Mi"
+            cpu: "200m"
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          runAsNonRoot: true
+          runAsUser: 1003
+        volumeMounts:
+        - name: site-configs
+          mountPath: /app/configs
+        - name: ssh-keys
+          mountPath: /app/ssh
+          readOnly: true
+        - name: tmp
+          mountPath: /tmp
+      volumes:
+      - name: site-configs
+        emptyDir:
+          sizeLimit: 1Gi
+      - name: ssh-keys
+        secret:
+          secretName: site-manager-ssh-keys
+          defaultMode: 0600
+      - name: tmp
+        emptyDir:
+          sizeLimit: 100Mi
+
+---
+# Edge Analytics Engine
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: edge-analytics-engine
+  namespace: electrical-estimation
+  labels:
+    app: edge-analytics-engine
+    tier: edge-analytics
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: edge-analytics-engine
+  template:
+    metadata:
+      labels:
+        app: edge-analytics-engine
+        tier: edge-analytics
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8084"
+    spec:
+      serviceAccountName: electrical-edge-service
+      priorityClassName: high-priority
+      containers:
+      - name: analytics-engine
+        image: gcr.io/PROJECT_ID/edge-analytics-engine:latest
+        ports:
+        - name: http
+          containerPort: 8084
+        - name: grpc
+          containerPort: 9094
+        - name: metrics
+          containerPort: 9095
+        env:
+        - name: ANALYTICS_MODE
+          value: "real-time"
+        - name: PROCESSING_WINDOW
+          value: "5m"
+        - name: ENABLE_ML_INFERENCE
+          value: "true"
+        - name: MODEL_UPDATE_INTERVAL
+          value: "3600s"
+        - name: ANOMALY_DETECTION_ENABLED
+          value: "true"
+        - name: TIME_SERIES_BUFFER_SIZE
+          value: "100000"
+        resources:
+          requests:
+            memory: "1Gi"
+            cpu: "500m"
+            ephemeral-storage: "2Gi"
+          limits:
+            memory: "2Gi"
+            cpu: "1000m"
+            ephemeral-storage: "4Gi"
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          runAsNonRoot: true
+          runAsUser: 1004
+        volumeMounts:
+        - name: analytics-cache
+          mountPath: /app/cache
+        - name: ml-models
+          mountPath: /app/models
+        - name: analytics-data
+          mountPath: /app/data
+        - name: tmp
+          mountPath: /tmp
+      volumes:
+      - name: analytics-cache
+        emptyDir:
+          sizeLimit: 2Gi
+      - name: ml-models
+        persistentVolumeClaim:
+          claimName: ml-models-pvc
+      - name: analytics-data
+        emptyDir:
+          sizeLimit: 5Gi
+      - name: tmp
+        emptyDir:
+          sizeLimit: 1Gi
+
+---
+# Edge Gateway for remote site connectivity
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: edge-gateway
+  namespace: electrical-estimation
+  labels:
+    app: edge-gateway
+    tier: edge-connectivity
+spec:
+  selector:
+    matchLabels:
+      app: edge-gateway
+  template:
+    metadata:
+      labels:
+        app: edge-gateway
+        tier: edge-connectivity
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8085"
+    spec:
+      serviceAccountName: electrical-edge-service
+      hostNetwork: true
+      dnsPolicy: ClusterFirstWithHostNet
+      tolerations:
+      - effect: NoSchedule
+        operator: Exists
+      containers:
+      - name: edge-gateway
+        image: gcr.io/PROJECT_ID/edge-gateway:latest
+        ports:
+        - name: http
+          containerPort: 8085
+          hostPort: 8085
+        - name: vpn
+          containerPort: 1194
+          hostPort: 1194
+          protocol: UDP
+        - name: tunnel
+          containerPort: 4789
+          hostPort: 4789
+          protocol: UDP
+        env:
+        - name: NODE_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: spec.nodeName
+        - name: POD_IP
+          valueFrom:
+            fieldRef:
+              fieldPath: status.podIP
+        - name: ENABLE_VPN_SERVER
+          value: "true"
+        - name: ENABLE_TUNNEL_MODE
+          value: "true"
+        - name: BANDWIDTH_LIMIT
+          value: "100Mbps"
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "100m"
+          limits:
+            memory: "512Mi"
+            cpu: "200m"
+        securityContext:
+          privileged: true
+          capabilities:
+            add:
+            - NET_ADMIN
+            - NET_RAW
+        volumeMounts:
+        - name: gateway-config
+          mountPath: /app/config
+        - name: vpn-certs
+          mountPath: /app/vpn/certs
+          readOnly: true
+        - name: dev-net-tun
+          mountPath: /dev/net/tun
+      volumes:
+      - name: gateway-config
+        configMap:
+          name: edge-gateway-config
+      - name: vpn-certs
+        secret:
+          secretName: edge-vpn-certificates
+      - name: dev-net-tun
+        hostPath:
+          path: /dev/net/tun
+
+---
+# Services for all edge components
+apiVersion: v1
+kind: Service
+metadata:
+  name: edge-device-manager
+  namespace: electrical-estimation
+spec:
+  selector:
+    app: edge-device-manager
+  ports:
+  - name: http
+    port: 80
+    targetPort: 8081
+  - name: mqtt
+    port: 1883
+    targetPort: 1883
+  - name: coap
+    port: 5683
+    targetPort: 5683
+    protocol: UDP
+  type: ClusterIP
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: edge-mqtt-broker
+  namespace: electrical-estimation
+spec:
+  selector:
+    app: edge-mqtt-broker
+  ports:
+  - name: mqtt
+    port: 1883
+    targetPort: 1883
+  - name: mqtt-tls
+    port: 8883
+    targetPort: 8883
+  - name: websocket
+    port: 9001
+    targetPort: 9001
+  type: LoadBalancer
+  loadBalancerSourceRanges:
+  - 10.0.0.0/8
+  - 172.16.0.0/12
+  - 192.168.0.0/16
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: edge-data-sync
+  namespace: electrical-estimation
+spec:
+  selector:
+    app: edge-data-sync
+  ports:
+  - name: http
+    port: 80
+    targetPort: 8082
+  - name: grpc
+    port: 9092
+    targetPort: 9092
+  type: ClusterIP
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: remote-site-manager
+  namespace: electrical-estimation
+spec:
+  selector:
+    app: remote-site-manager
+  ports:
+  - name: http
+    port: 80
+    targetPort: 8083
+  - name: ssh
+    port: 2222
+    targetPort: 2222
+  type: LoadBalancer
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: edge-analytics-engine
+  namespace: electrical-estimation
+spec:
+  selector:
+    app: edge-analytics-engine
+  ports:
+  - name: http
+    port: 80
+    targetPort: 8084
+  - name: grpc
+    port: 9094
+    targetPort: 9094
+  type: ClusterIP
+
+---
+# Persistent Volume Claims
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: mqtt-data-pvc
+  namespace: electrical-estimation
+spec:
+  accessModes:
+  - ReadWriteOnce
+  resources:
+    requests:
+      storage: 5Gi
+  storageClassName: fast-ssd
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: sync-buffer-pvc
+  namespace: electrical-estimation
+spec:
+  accessModes:
+  - ReadWriteOnce
+  resources:
+    requests:
+      storage: 20Gi
+  storageClassName: fast-ssd
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: ml-models-pvc
+  namespace: electrical-estimation
+spec:
+  accessModes:
+  - ReadWriteMany
+  resources:
+    requests:
+      storage: 10Gi
+  storageClassName: fast-ssd
+
+---
+# ConfigMaps for edge services
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mqtt-broker-config
+  namespace: electrical-estimation
+data:
+  mosquitto.conf: |
+    # MQTT Broker Configuration for Edge IoT Devices
+    listener 1883
+    protocol mqtt
+    allow_anonymous false
+    password_file /mosquitto/config/passwd
+    
+    listener 8883
+    protocol mqtt
+    cafile /mosquitto/certs/ca.crt
+    certfile /mosquitto/certs/server.crt
+    keyfile /mosquitto/certs/server.key
+    require_certificate true
+    
+    listener 9001
+    protocol websockets
+    
+    # Logging
+    log_dest file /mosquitto/log/mosquitto.log
+    log_type error
+    log_type warning
+    log_type notice
+    log_type information
+    
+    # Persistence
+    persistence true
+    persistence_location /mosquitto/data/
+    
+    # Security
+    max_connections 1000
+    max_keepalive 300
+    
+    # Performance
+    message_size_limit 268435456
+    max_inflight_messages 20
+    max_queued_messages 1000
+
+  passwd: |
+    # MQTT users (passwords are hashed)
+    edge-device:$6$rounds=901$edge-hash$encrypted-password-hash
+    iot-sensor:$6$rounds=901$sensor-hash$encrypted-password-hash
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: edge-gateway-config
+  namespace: electrical-estimation
+data:
+  gateway.conf: |
+    # Edge Gateway Configuration
+    server_mode = true
+    listen_port = 1194
+    protocol = udp
+    dev = tun
+    topology = subnet
+    
+    # Network configuration
+    server = 10.8.0.0 255.255.255.0
+    ifconfig-pool-persist ipp.txt
+    
+    # Routing
+    push "route 10.0.0.0 255.0.0.0"
+    push "route 172.16.0.0 255.240.0.0"
+    push "route 192.168.0.0 255.255.0.0"
+    
+    # Security
+    ca = /app/vpn/certs/ca.crt
+    cert = /app/vpn/certs/server.crt
+    key = /app/vpn/certs/server.key
+    dh = /app/vpn/certs/dh.pem
+    
+    # Performance
+    keepalive = 10 120
+    comp-lzo = adaptive
+    persist-key = true
+    persist-tun = true
+    
+    # Logging
+    status = /var/log/openvpn-status.log
+    log-append = /var/log/openvpn.log
+    verb = 3
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: edge-site-templates
+  namespace: electrical-estimation
+data:
+  construction-site.yaml: |
+    # Construction Site Edge Configuration Template
+    site_type: construction
+    edge_capabilities:
+      - real_time_load_calculation
+      - safety_monitoring
+      - equipment_tracking
+      - progress_reporting
+    
+    hardware_requirements:
+      min_cpu: "4 cores"
+      min_memory: "8GB"
+      min_storage: "100GB"
+      gpu_required: true
+      network_bandwidth: "100Mbps"
+    
+    sensors:
+      - type: power_meter
+        protocol: modbus
+        polling_interval: "1s"
+      - type: safety_camera
+        protocol: rtsp
+        resolution: "1080p"
+      - type: environmental
+        protocol: mqtt
+        metrics: ["temperature", "humidity", "dust"]
+    
+    processing_config:
+      max_latency_ms: 10
+      priority: high
+      enable_offline_mode: true
+      sync_interval: "30s"
+
+  design-office.yaml: |
+    # Design Office Edge Configuration Template
+    site_type: design_office
+    edge_capabilities:
+      - advanced_calculations
+      - cad_integration
+      - collaboration_tools
+      - version_control
+    
+    hardware_requirements:
+      min_cpu: "8 cores"
+      min_memory: "32GB"
+      min_storage: "500GB"
+      gpu_required: true
+      network_bandwidth: "1Gbps"
+    
+    software_stack:
+      - autocad_plugin
+      - revit_plugin
+      - calculation_engine
+      - version_control_client
+    
+    processing_config:
+      max_latency_ms: 5
+      priority: high
+      enable_collaboration: true
+      auto_backup: true
+
+  mobile-inspector.yaml: |
+    # Mobile Inspector Edge Configuration Template
+    site_type: mobile_unit
+    edge_capabilities:
+      - code_compliance_check
+      - photo_analysis
+      - report_generation
+      - offline_operation
+    
+    hardware_requirements:
+      min_cpu: "2 cores"
+      min_memory: "4GB"
+      min_storage: "64GB"
+      gpu_required: false
+      battery_life: "8 hours"
+    
+    mobile_features:
+      - gps_tracking
+      - photo_capture
+      - barcode_scanning
+      - signature_capture
+      - offline_sync
+    
+    processing_config:
+      max_latency_ms: 50
+      priority: normal
+      offline_buffer_size: 1000
+      sync_when_online: true
+
+---
+# Network Policies for Edge Components
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: edge-components-network-policy
+  namespace: electrical-estimation
+spec:
+  podSelector:
+    matchLabels:
+      tier: edge-management
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  # Allow inter-edge communication
+  - from:
+    - podSelector:
+        matchExpressions:
+        - key: tier
+          operator: In
+          values: ["edge-management", "edge-analytics", "iot-communication"]
+  # Allow from ingress controllers
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: ingress-nginx
+  # Allow monitoring
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: monitoring
+  egress:
+  # Allow DNS
+  - to: []
+    ports:
+    - protocol: UDP
+      port: 53
+  # Allow HTTPS for cloud sync
+  - to: []
+    ports:
+    - protocol: TCP
+      port: 443
+  # Allow database connections
+  - to: []
+    ports:
+    - protocol: TCP
+      port: 5432
+  # Allow inter-edge communication
+  - to:
+    - podSelector:
+        matchExpressions:
+        - key: tier
+          operator: In
+          values: ["edge-management", "edge-analytics", "iot-communication"]
+
+---
+# ServiceMonitors for edge components
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: edge-components-metrics
+  namespace: electrical-estimation
+spec:
+  selector:
+    matchExpressions:
+    - key: tier
+      operator: In
+      values: ["edge-management", "edge-analytics", "iot-communication"]
+  endpoints:
+  - port: metrics
+    interval: 15s
+    path: /metrics
+
+---
+# PrometheusRule for edge monitoring alerts
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: edge-computing-alerts
+  namespace: electrical-estimation
+spec:
+  groups:
+  - name: edge-computing.rules
+    rules:
+    - alert: EdgeDeviceOffline
+      expr: up{job=~"edge-.*"} == 0
+      for: 2m
+      labels:
+        severity: warning
+        component: edge-device
+      annotations:
+        summary: "Edge device is offline"
+        description: "Edge device {{ $labels.instance }} has been offline for more than 2 minutes"
+    
+    - alert: EdgeHighLatency
+      expr: edge_processing_latency_ms > 10
+      for: 1m
+      labels:
+        severity: critical
+        component: edge-processing
+      annotations:
+        summary: "Edge processing latency too high"
+        description: "Edge processing latency is {{ $value }}ms, exceeding 10ms threshold"
+    
+    - alert: EdgeDataSyncFailing
+      expr: increase(edge_sync_failures_total[5m]) > 5
+      for: 2m
+      labels:
+        severity: warning
+        component: edge-sync
+      annotations:
+        summary: "Edge data synchronization failing"
+        description: "{{ $value }} sync failures in the last 5 minutes"
+    
+    - alert: EdgeStorageFull
+      expr: edge_storage_usage_percent > 90
+      for: 5m
+      labels:
+        severity: critical
+        component: edge-storage
+      annotations:
+        summary: "Edge storage nearly full"
+        description: "Edge storage usage is {{ $value }}%"

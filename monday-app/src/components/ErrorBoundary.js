@@ -1,6 +1,4 @@
 import React from 'react';
-import { Box, Heading, Text, Button, Card } from '@vibe/core';
-import { AlertTriangle, Refresh } from '@vibe/core/icons';
 
 /**
  * ErrorBoundary component for catching and displaying React errors
@@ -85,95 +83,121 @@ class ErrorBoundary extends React.Component {
 
       // Default error UI
       return (
-        <Box padding="large" display="flex" justifyContent="center" alignItems="center" minHeight="400px">
-          <Card>
-            <Box padding="large" textAlign="center" maxWidth="500px">
-              <AlertTriangle size="large" color="negative" marginBottom="medium" />
+        <div style={{ 
+          padding: '40px', 
+          display: 'flex', 
+          justifyContent: 'center', 
+          alignItems: 'center', 
+          minHeight: '400px' 
+        }}>
+          <div style={{ 
+            background: 'white', 
+            padding: '40px', 
+            borderRadius: '8px', 
+            boxShadow: '0 2px 10px rgba(0,0,0,0.1)',
+            textAlign: 'center', 
+            maxWidth: '500px' 
+          }}>
+            <div style={{ fontSize: '48px', marginBottom: '20px' }}>⚠️</div>
+            
+            <h1 style={{ fontSize: '24px', marginBottom: '10px', color: '#333' }}>
+              Oops! Something went wrong
+            </h1>
+            
+            <p style={{ color: '#666', marginBottom: '30px' }}>
+              {this.props.errorMessage || 
+                'We encountered an unexpected error. Our team has been notified and is working on a fix.'
+              }
+            </p>
+
+            {/* Error Details (only show in development) */}
+            {process.env.NODE_ENV === 'development' && this.state.error && (
+              <div style={{ marginBottom: '30px' }}>
+                <details style={{ textAlign: 'left', marginTop: '1rem' }}>
+                  <summary style={{ cursor: 'pointer', marginBottom: '0.5rem' }}>
+                    <strong style={{ fontSize: '12px' }}>Error Details (Development Only)</strong>
+                  </summary>
+                  <div style={{ 
+                    backgroundColor: '#f8f9fa',
+                    padding: '15px',
+                    borderRadius: '4px',
+                    marginTop: '10px',
+                    border: '1px solid #e9ecef'
+                  }}>
+                    <div style={{ fontSize: '12px', fontFamily: 'monospace' }}>
+                      <strong>Error:</strong> {this.state.error.message}
+                    </div>
+                    <br />
+                    <div style={{ fontSize: '12px', fontFamily: 'monospace' }}>
+                      <strong>Stack:</strong>
+                    </div>
+                    <pre style={{ 
+                      fontSize: '11px', 
+                      overflow: 'auto', 
+                      maxHeight: '200px',
+                      marginTop: '4px',
+                      whiteSpace: 'pre-wrap'
+                    }}>
+                      {this.state.error.stack}
+                    </pre>
+                  </div>
+                </details>
+              </div>
+            )}
+
+            {/* Error ID for support */}
+            {this.state.errorId && (
+              <p style={{ fontSize: '12px', color: '#666', marginBottom: '30px' }}>
+                Error ID: {this.state.errorId}
+              </p>
+            )}
+
+            {/* Action Buttons */}
+            <div style={{ display: 'flex', gap: '10px', justifyContent: 'center' }}>
+              <button
+                onClick={this.handleRetry}
+                style={{
+                  backgroundColor: '#f8f9fa',
+                  color: '#333',
+                  padding: '10px 20px',
+                  border: '1px solid #ddd',
+                  borderRadius: '4px',
+                  cursor: 'pointer'
+                }}
+              >
+                🔄 Try Again
+              </button>
               
-              <Heading size="large" marginBottom="small">
-                Oops! Something went wrong
-              </Heading>
-              
-              <Text color="secondary" marginBottom="large">
-                {this.props.errorMessage || 
-                  'We encountered an unexpected error. Our team has been notified and is working on a fix.'
-                }
-              </Text>
+              <button
+                onClick={this.handleReload}
+                style={{
+                  backgroundColor: '#0073ea',
+                  color: 'white',
+                  padding: '10px 20px',
+                  border: 'none',
+                  borderRadius: '4px',
+                  cursor: 'pointer'
+                }}
+              >
+                Reload Page
+              </button>
+            </div>
 
-              {/* Error Details (only show in development) */}
-              {process.env.NODE_ENV === 'development' && this.state.error && (
-                <Box marginBottom="large">
-                  <details style={{ textAlign: 'left', marginTop: '1rem' }}>
-                    <summary style={{ cursor: 'pointer', marginBottom: '0.5rem' }}>
-                      <Text size="small" weight="bold">Error Details (Development Only)</Text>
-                    </summary>
-                    <Box 
-                      backgroundColor="var(--color-surface-negative-subtle)"
-                      padding="small"
-                      borderRadius="4px"
-                      marginTop="small"
-                    >
-                      <Text size="small" family="monospace">
-                        <strong>Error:</strong> {this.state.error.message}
-                      </Text>
-                      <br />
-                      <Text size="small" family="monospace">
-                        <strong>Stack:</strong>
-                      </Text>
-                      <pre style={{ 
-                        fontSize: '11px', 
-                        overflow: 'auto', 
-                        maxHeight: '200px',
-                        marginTop: '4px',
-                        whiteSpace: 'pre-wrap'
-                      }}>
-                        {this.state.error.stack}
-                      </pre>
-                    </Box>
-                  </details>
-                </Box>
-              )}
-
-              {/* Error ID for support */}
-              {this.state.errorId && (
-                <Text size="small" color="secondary" marginBottom="large">
-                  Error ID: {this.state.errorId}
-                </Text>
-              )}
-
-              {/* Action Buttons */}
-              <Box display="flex" gap="small" justifyContent="center">
-                <Button
-                  leftIcon={Refresh}
-                  onClick={this.handleRetry}
-                  kind="secondary"
+            {/* Support Info */}
+            <div style={{ marginTop: '30px' }}>
+              <p style={{ fontSize: '12px', color: '#666' }}>
+                Need help? Contact{' '}
+                <a 
+                  href="mailto:support@electricalai.pro" 
+                  style={{ color: '#0073ea' }}
                 >
-                  Try Again
-                </Button>
-                
-                <Button
-                  onClick={this.handleReload}
-                >
-                  Reload Page
-                </Button>
-              </Box>
-
-              {/* Support Info */}
-              <Box marginTop="large">
-                <Text size="small" color="secondary">
-                  Need help? Contact{' '}
-                  <a 
-                    href="mailto:support@electricalai.pro" 
-                    style={{ color: 'var(--primary-color)' }}
-                  >
-                    support@electricalai.pro
-                  </a>
-                  {this.state.errorId && ` and include Error ID: ${this.state.errorId}`}
-                </Text>
-              </Box>
-            </Box>
-          </Card>
-        </Box>
+                  support@electricalai.pro
+                </a>
+                {this.state.errorId && ` and include Error ID: ${this.state.errorId}`}
+              </p>
+            </div>
+          </div>
+        </div>
       );
     }
 

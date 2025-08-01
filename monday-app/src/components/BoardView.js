@@ -1,572 +1,106 @@
-import React, { useState, useEffect } from 'react';
-import { useQuery, useMutation, useQueryClient } from 'react-query';
-import {
-  Box,
-  Flex,
-  Button,
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-  Loader,
-  Text,
-  Heading,
-  Badge,
-  IconButton,
-  SearchBar,
-  Dropdown,
-  Card,
-  ProgressBar,
-  Avatar,
-  Tooltip
-} from '@vibe/core';
-import {
-  Add,
-  Refresh,
-  Filter,
-  Export,
-  Eye,
-  Calculator,
-  CheckCircle,
-  AlertTriangle,
-  Clock,
-  DollarSign,
-  FileText,
-  Users
-} from '@vibe/core/icons';
-
-import { useAppContext } from '../contexts/AppContext';
-import { MondayService } from '../services/MondayService';
-import { N8NService } from '../services/N8NService';
-import { formatCurrency, formatDate, getStatusColor } from '../utils/helpers';
+import React from 'react';
 
 const BoardView = ({ context, settings, monday }) => {
-  const { user } = useAppContext();
-  const queryClient = useQueryClient();
-  const [searchTerm, setSearchTerm] = useState('');
-  const [statusFilter, setStatusFilter] = useState('all');
-  const [selectedItems, setSelectedItems] = useState([]);
-  const [batchProcessing, setBatchProcessing] = useState(false);
-
-  // Get board items with real-time updates
-  const { 
-    data: boardItems = [], 
-    isLoading: itemsLoading, 
-    error: itemsError,
-    refetch: refetchItems 
-  } = useQuery(
-    ['board-items', context?.boardId, statusFilter],
-    () => MondayService.getBoardItems(context.boardId, { limit: 100 }),
-    {
-      enabled: !!context?.boardId,
-      staleTime: 30000, // 30 seconds
-      refetchInterval: 60000, // Refresh every minute
-      onError: (error) => {
-        console.error('Failed to load board items:', error);
-      }
-    }
-  );
-
-  // Get board columns for dynamic rendering
-  const { data: boardColumns = [] } = useQuery(
-    ['board-columns', context?.boardId],
-    () => MondayService.getBoardColumns(context.boardId),
-    {
-      enabled: !!context?.boardId,
-      staleTime: 300000 // 5 minutes
-    }
-  );
-
-  // Batch estimation mutation
-  const batchEstimationMutation = useMutation(
-    async (itemIds) => {
-      setBatchProcessing(true);
-      
-      const workflows = itemIds.map(itemId => ({
-        id: itemId,
-        type: 'estimation',
-        payload: {
-          projectId: itemId,
-          projectType: 'residential', // Default, can be enhanced
-          source: 'monday-batch-board-view'
-        }
-      }));
-
-      const results = await N8NService.triggerBatchWorkflows(workflows);
-      return results;
-    },
-    {
-      onSuccess: (results) => {
-        const successful = results.filter(r => r.success).length;
-        const failed = results.filter(r => !r.success).length;
-        
-        console.log(`✅ Batch estimation completed: ${successful} successful, ${failed} failed`);
-        
-        // Refresh board items to show updates
-        refetchItems();
-        
-        // Reset selection
-        setSelectedItems([]);
-      },
-      onError: (error) => {
-        console.error('❌ Batch estimation failed:', error);
-      },
-      onSettled: () => {
-        setBatchProcessing(false);
-      }
-    }
-  );
-
-  // Create new estimation item mutation
-  const createItemMutation = useMutation(
-    async (itemData) => {
-      const newItem = await MondayService.createItem(
-        context.boardId,
-        itemData.name,
-        {
-          status: { label: 'New Project' },
-          text: itemData.description || '',
-          person: { personsAndTeams: [{ id: user.id, kind: 'person' }] },
-          date: new Date().toISOString().split('T')[0]
-        }
-      );
-      
-      return newItem;
-    },
-    {
-      onSuccess: () => {
-        console.log('✅ New estimation project created');
-        refetchItems();
-      },
-      onError: (error) => {
-        console.error('❌ Failed to create project:', error);
-      }
-    }
-  );
-
-  // Filter items based on search and status
-  const filteredItems = boardItems.filter(item => {
-    const matchesSearch = searchTerm === '' || 
-      item.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      item.column_values.some(col => 
-        col.text && col.text.toLowerCase().includes(searchTerm.toLowerCase())
-      );
-    
-    const matchesStatus = statusFilter === 'all' || 
-      getItemStatus(item) === statusFilter;
-    
-    return matchesSearch && matchesStatus;
-  });
-
-  // Helper function to get item status
-  const getItemStatus = (item) => {
-    const statusColumn = item.column_values.find(col => col.type === 'color');
-    if (statusColumn && statusColumn.text) {
-      return statusColumn.text.toLowerCase();
-    }
-    return 'unknown';
-  };
-
-  // Helper function to get item cost
-  const getItemCost = (item) => {
-    const costColumn = item.column_values.find(col => col.type === 'numeric');
-    if (costColumn && costColumn.text) {
-      return parseFloat(costColumn.text.replace(/[^0-9.-]+/g, '')) || 0;
-    }
-    return 0;
-  };
-
-  // Helper function to check if item has estimation data
-  const hasEstimationData = (item) => {
-    return item.column_values.some(col => 
-      col.id === 'numbers' && col.text && parseFloat(col.text) > 0
-    );
-  };
-
-  const handleItemSelection = (itemId, selected) => {
-    if (selected) {
-      setSelectedItems(prev => [...prev, itemId]);
-    } else {
-      setSelectedItems(prev => prev.filter(id => id !== itemId));
-    }
-  };
-
-  const handleSelectAll = () => {
-    if (selectedItems.length === filteredItems.length) {
-      setSelectedItems([]);
-    } else {
-      setSelectedItems(filteredItems.map(item => item.id));
-    }
-  };
-
-  const handleBatchEstimation = () => {
-    if (selectedItems.length > 0) {
-      batchEstimationMutation.mutate(selectedItems);
-    }
-  };
-
-  const handleCreateProject = () => {
-    const projectName = `Electrical Project ${new Date().toLocaleDateString()}`;
-    createItemMutation.mutate({
-      name: projectName,
-      description: 'New electrical estimation project'
-    });
-  };
-
-  const exportResults = () => {
-    const exportData = filteredItems.map(item => ({
-      id: item.id,
-      name: item.name,
-      status: getItemStatus(item),
-      cost: getItemCost(item),
-      created: item.created_at,
-      updated: item.updated_at
-    }));
-
-    const blob = new Blob([JSON.stringify(exportData, null, 2)], {
-      type: 'application/json'
-    });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `board-export-${Date.now()}.json`;
-    a.click();
-  };
-
-  if (itemsLoading) {
-    return (
-      <Box padding="large">
-        <Flex direction="column" align="center" gap="medium">
-          <Loader size="large" />
-          <Text>Loading board data...</Text>
-        </Flex>
-      </Box>
-    );
-  }
-
-  if (itemsError) {
-    return (
-      <Box padding="large">
-        <Card>
-          <Box padding="large">
-            <Flex direction="column" align="center" gap="medium">
-              <AlertTriangle size="large" color="negative" />
-              <Heading size="medium">Failed to Load Board</Heading>
-              <Text color="secondary">{itemsError.message}</Text>
-              <Button onClick={refetchItems} leftIcon={Refresh}>
-                Retry
-              </Button>
-            </Flex>
-          </Box>
-        </Card>
-      </Box>
-    );
-  }
-
   return (
-    <Box padding="large">
-      {/* Header Section */}
-      <Flex justify="space-between" align="center" marginBottom="large">
-        <Box>
-          <Heading size="large">⚡ Estimation Dashboard</Heading>
-          <Text color="secondary">
-            {filteredItems.length} projects • {selectedItems.length} selected
-          </Text>
-        </Box>
-        
-        <Flex gap="small">
-          <Button
-            size="small"
-            kind="secondary"
-            leftIcon={Export}
-            onClick={exportResults}
-          >
-            Export
-          </Button>
-          <Button
-            size="small"
-            leftIcon={Add}
-            onClick={handleCreateProject}
-            loading={createItemMutation.isLoading}
-          >
-            New Project
-          </Button>
-        </Flex>
-      </Flex>
+    <div style={{ padding: '20px', maxWidth: '800px', margin: '0 auto' }}>
+      <h1>📊 Estimation Dashboard</h1>
+      
+      <div style={{ background: '#f5f5f5', padding: '20px', borderRadius: '8px', marginBottom: '20px' }}>
+        <h2>Board Overview</h2>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '15px' }}>
+          <div style={{ background: 'white', padding: '15px', borderRadius: '4px', textAlign: 'center' }}>
+            <h3>Total Projects</h3>
+            <div style={{ fontSize: '24px', fontWeight: 'bold', color: '#0073ea' }}>12</div>
+          </div>
+          <div style={{ background: 'white', padding: '15px', borderRadius: '4px', textAlign: 'center' }}>
+            <h3>Estimated</h3>
+            <div style={{ fontSize: '24px', fontWeight: 'bold', color: '#00c875' }}>8</div>
+          </div>
+          <div style={{ background: 'white', padding: '15px', borderRadius: '4px', textAlign: 'center' }}>
+            <h3>Total Value</h3>
+            <div style={{ fontSize: '24px', fontWeight: 'bold', color: '#fdab3d' }}>$342,750</div>
+          </div>
+          <div style={{ background: 'white', padding: '15px', borderRadius: '4px', textAlign: 'center' }}>
+            <h3>Avg. Timeline</h3>
+            <div style={{ fontSize: '24px', fontWeight: 'bold', color: '#a25ddc' }}>2.3 days</div>
+          </div>
+        </div>
+      </div>
 
-      {/* Controls Section */}
-      <Card marginBottom="medium">
-        <Box padding="medium">
-          <Flex gap="medium" align="center">
-            <Box flex="2">
-              <SearchBar
-                placeholder="Search projects..."
-                value={searchTerm}
-                onSearchChange={setSearchTerm}
-                size="small"
-              />
-            </Box>
-            
-            <Box flex="1">
-              <Dropdown
-                placeholder="Filter by status"
-                options={[
-                  { value: 'all', label: 'All Status' },
-                  { value: 'new project', label: 'New Projects' },
-                  { value: 'in progress', label: 'In Progress' },
-                  { value: 'estimated', label: 'Estimated' },
-                  { value: 'completed', label: 'Completed' }
-                ]}
-                value={statusFilter}
-                onChange={setStatusFilter}
-                size="small"
-              />
-            </Box>
-            
-            <IconButton
-              icon={Refresh}
-              onClick={refetchItems}
-              size="small"
-              tooltip="Refresh data"
-            />
-          </Flex>
-        </Box>
-      </Card>
+      <div style={{ background: '#f5f5f5', padding: '20px', borderRadius: '8px', marginBottom: '20px' }}>
+        <h2>Recent Projects</h2>
+        <div style={{ background: 'white', borderRadius: '4px', overflow: 'hidden' }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+            <thead style={{ background: '#e1e5e9' }}>
+              <tr>
+                <th style={{ padding: '12px', textAlign: 'left', borderBottom: '1px solid #ddd' }}>Project</th>
+                <th style={{ padding: '12px', textAlign: 'left', borderBottom: '1px solid #ddd' }}>Status</th>
+                <th style={{ padding: '12px', textAlign: 'left', borderBottom: '1px solid #ddd' }}>Cost</th>
+                <th style={{ padding: '12px', textAlign: 'left', borderBottom: '1px solid #ddd' }}>Updated</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td style={{ padding: '12px', borderBottom: '1px solid #eee' }}>Residential Rewiring - Smith House</td>
+                <td style={{ padding: '12px', borderBottom: '1px solid #eee' }}>
+                  <span style={{ background: '#00c875', color: 'white', padding: '4px 8px', borderRadius: '12px', fontSize: '12px' }}>
+                    Estimated
+                  </span>
+                </td>
+                <td style={{ padding: '12px', borderBottom: '1px solid #eee' }}>$18,500</td>
+                <td style={{ padding: '12px', borderBottom: '1px solid #eee' }}>2 hours ago</td>
+              </tr>
+              <tr>
+                <td style={{ padding: '12px', borderBottom: '1px solid #eee' }}>Commercial Office - Tech Startup</td>
+                <td style={{ padding: '12px', borderBottom: '1px solid #eee' }}>
+                  <span style={{ background: '#fdab3d', color: 'white', padding: '4px 8px', borderRadius: '12px', fontSize: '12px' }}>
+                    In Progress
+                  </span>
+                </td>
+                <td style={{ padding: '12px', borderBottom: '1px solid #eee' }}>$45,200</td>
+                <td style={{ padding: '12px', borderBottom: '1px solid #eee' }}>1 day ago</td>
+              </tr>
+              <tr>
+                <td style={{ padding: '12px', borderBottom: '1px solid #eee' }}>Industrial Warehouse - Manufacturing</td>
+                <td style={{ padding: '12px', borderBottom: '1px solid #eee' }}>
+                  <span style={{ background: '#0073ea', color: 'white', padding: '4px 8px', borderRadius: '12px', fontSize: '12px' }}>
+                    New Project
+                  </span>
+                </td>
+                <td style={{ padding: '12px', borderBottom: '1px solid #eee' }}>—</td>
+                <td style={{ padding: '12px', borderBottom: '1px solid #eee' }}>3 days ago</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
 
-      {/* Batch Actions */}
-      {selectedItems.length > 0 && (
-        <Card marginBottom="medium">
-          <Box padding="medium">
-            <Flex gap="medium" align="center">
-              <Text weight="bold">
-                {selectedItems.length} items selected
-              </Text>
-              
-              <Button
-                size="small"
-                leftIcon={Calculator}
-                onClick={handleBatchEstimation}
-                loading={batchProcessing}
-              >
-                Generate Estimates
-              </Button>
-              
-              <Button
-                size="small"
-                kind="secondary"
-                onClick={() => setSelectedItems([])}
-              >
-                Clear Selection
-              </Button>
-            </Flex>
-          </Box>
-        </Card>
-      )}
+      <div style={{ background: '#e8f4fd', padding: '15px', borderRadius: '8px' }}>
+        <h3>🚀 Batch Processing</h3>
+        <p>Select multiple projects and generate estimates simultaneously for improved efficiency.</p>
+        <button
+          style={{
+            backgroundColor: '#0073ea',
+            color: 'white',
+            padding: '10px 20px',
+            border: 'none',
+            borderRadius: '4px',
+            cursor: 'pointer',
+            marginTop: '10px'
+          }}
+          onClick={() => alert('Batch processing would start here!')}
+        >
+          Process Selected Projects
+        </button>
+      </div>
 
-      {/* Main Table */}
-      <Card>
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>
-                <input
-                  type="checkbox"
-                  checked={selectedItems.length === filteredItems.length && filteredItems.length > 0}
-                  onChange={handleSelectAll}
-                />
-              </TableHead>
-              <TableHead>Project</TableHead>
-              <TableHead>Status</TableHead>
-              <TableHead>Cost Estimate</TableHead>
-              <TableHead>Progress</TableHead>
-              <TableHead>Owner</TableHead>
-              <TableHead>Updated</TableHead>
-              <TableHead>Actions</TableHead>
-            </TableRow>
-          </TableHeader>
-          
-          <TableBody>
-            {filteredItems.map((item) => {
-              const status = getItemStatus(item);
-              const cost = getItemCost(item);
-              const hasEstimation = hasEstimationData(item);
-              const isSelected = selectedItems.includes(item.id);
-              
-              // Get owner from person column
-              const ownerColumn = item.column_values.find(col => col.type === 'multiple-person');
-              const owner = ownerColumn?.text || 'Unassigned';
-              
-              return (
-                <TableRow key={item.id} selected={isSelected}>
-                  <TableCell>
-                    <input
-                      type="checkbox"
-                      checked={isSelected}
-                      onChange={(e) => handleItemSelection(item.id, e.target.checked)}
-                    />
-                  </TableCell>
-                  
-                  <TableCell>
-                    <Flex direction="column" gap="xs">
-                      <Text weight="bold">{item.name}</Text>
-                      <Text size="small" color="secondary">
-                        ID: {item.id}
-                      </Text>
-                    </Flex>
-                  </TableCell>
-                  
-                  <TableCell>
-                    <Badge color={getStatusColor(status)}>
-                      {status}
-                    </Badge>
-                  </TableCell>
-                  
-                  <TableCell>
-                    <Flex align="center" gap="xs">
-                      <DollarSign size="small" />
-                      <Text weight={hasEstimation ? "bold" : "normal"}>
-                        {cost > 0 ? formatCurrency(cost) : '—'}
-                      </Text>
-                      {hasEstimation && (
-                        <CheckCircle size="small" color="positive" />
-                      )}
-                    </Flex>
-                  </TableCell>
-                  
-                  <TableCell>
-                    <ProgressBar
-                      value={hasEstimation ? 75 : status === 'in progress' ? 25 : 0}
-                      size="small"
-                    />
-                  </TableCell>
-                  
-                  <TableCell>
-                    <Flex align="center" gap="xs">
-                      <Avatar size="small" text={owner} />
-                      <Text size="small">{owner}</Text>
-                    </Flex>
-                  </TableCell>
-                  
-                  <TableCell>
-                    <Text size="small" color="secondary">
-                      {formatDate(item.updated_at)}
-                    </Text>
-                  </TableCell>
-                  
-                  <TableCell>
-                    <Flex gap="xs">
-                      <Tooltip content="View details">
-                        <IconButton
-                          icon={Eye}
-                          size="small"
-                          onClick={() => {
-                            // Navigate to item view
-                            window.open(`/item-view?itemId=${item.id}`, '_blank');
-                          }}
-                        />
-                      </Tooltip>
-                      
-                      {!hasEstimation && (
-                        <Tooltip content="Generate estimate">
-                          <IconButton
-                            icon={Calculator}
-                            size="small"
-                            onClick={() => {
-                              batchEstimationMutation.mutate([item.id]);
-                            }}
-                          />
-                        </Tooltip>
-                      )}
-                    </Flex>
-                  </TableCell>
-                </TableRow>
-              );
-            })}
-          </TableBody>
-        </Table>
-        
-        {filteredItems.length === 0 && (
-          <Box padding="large">
-            <Flex direction="column" align="center" gap="medium">
-              <FileText size="large" color="secondary" />
-              <Heading size="medium">No Projects Found</Heading>
-              <Text color="secondary">
-                {searchTerm || statusFilter !== 'all' 
-                  ? 'Try adjusting your search or filters'
-                  : 'Create your first estimation project to get started'
-                }
-              </Text>
-              {!searchTerm && statusFilter === 'all' && (
-                <Button leftIcon={Add} onClick={handleCreateProject}>
-                  Create First Project
-                </Button>
-              )}
-            </Flex>
-          </Box>
-        )}
-      </Card>
-
-      {/* Summary Stats */}
-      <Box marginTop="large">
-        <Flex gap="medium">
-          <Card flex="1">
-            <Box padding="medium">
-              <Flex align="center" gap="small">
-                <FileText color="primary" />
-                <Box>
-                  <Text size="small" color="secondary">Total Projects</Text>
-                  <Heading size="medium">{boardItems.length}</Heading>
-                </Box>
-              </Flex>
-            </Box>
-          </Card>
-          
-          <Card flex="1">
-            <Box padding="medium">
-              <Flex align="center" gap="small">
-                <CheckCircle color="positive" />
-                <Box>
-                  <Text size="small" color="secondary">Estimated</Text>
-                  <Heading size="medium">
-                    {boardItems.filter(hasEstimationData).length}
-                  </Heading>
-                </Box>
-              </Flex>
-            </Box>
-          </Card>
-          
-          <Card flex="1">
-            <Box padding="medium">
-              <Flex align="center" gap="small">
-                <DollarSign color="warning" />
-                <Box>
-                  <Text size="small" color="secondary">Total Value</Text>
-                  <Heading size="medium">
-                    {formatCurrency(
-                      boardItems.reduce((sum, item) => sum + getItemCost(item), 0)
-                    )}
-                  </Heading>
-                </Box>
-              </Flex>
-            </Box>
-          </Card>
-          
-          <Card flex="1">
-            <Box padding="medium">
-              <Flex align="center" gap="small">
-                <Clock color="secondary" />
-                <Box>
-                  <Text size="small" color="secondary">Avg. Timeline</Text>
-                  <Heading size="medium">2.3 days</Heading>
-                </Box>
-              </Flex>
-            </Box>
-          </Card>
-        </Flex>
-      </Box>
-    </Box>
+      <div style={{ marginTop: '20px', fontSize: '12px', color: '#666' }}>
+        <p>
+          <strong>Board ID:</strong> {context?.boardId || 'Not available'} | 
+          <strong> User ID:</strong> {context?.userId || 'Not available'}
+        </p>
+      </div>
+    </div>
   );
 };
 

@@ -1,0 +1,459 @@
+# Edge Computing Deployment for Electrical Estimation System
+# Optimized for sub-5ms latency processing
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: electrical-edge-processor
+  namespace: electrical-estimation
+  labels:
+    app: electrical-edge-processor
+    tier: edge-computing
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: electrical-edge-processor
+  template:
+    metadata:
+      labels:
+        app: electrical-edge-processor
+        tier: edge-computing
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8080"
+        prometheus.io/path: "/metrics"
+    spec:
+      # Optimize for low latency
+      priorityClassName: high-priority
+      nodeSelector:
+        cloud.google.com/gke-nodepool: high-performance
+      tolerations:
+      - key: "high-performance"
+        operator: "Equal"
+        value: "true"
+        effect: "NoSchedule"
+      
+      # Anti-affinity for distribution
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchExpressions:
+                - key: app
+                  operator: In
+                  values:
+                  - electrical-edge-processor
+              topologyKey: kubernetes.io/hostname
+      
+      containers:
+      - name: edge-processor
+        image: gcr.io/PROJECT_ID/electrical-edge-processor:latest
+        imagePullPolicy: Always
+        
+        ports:
+        - name: http
+          containerPort: 8080
+          protocol: TCP
+        - name: metrics
+          containerPort: 9090
+          protocol: TCP
+        
+        env:
+        - name: NODE_TYPE
+          value: "construction-site"
+        - name: PROCESSING_PRIORITY
+          value: "high"
+        - name: ENABLE_EDGE_CACHE
+          value: "true"
+        - name: MAX_LATENCY_MS
+          value: "5"
+        - name: REDIS_URL
+          value: "redis://redis-edge:6379"
+        - name: POSTGRES_HOST
+          valueFrom:
+            secretKeyRef:
+              name: database-credentials
+              key: host
+        
+        # Resource limits optimized for performance
+        resources:
+          requests:
+            memory: "1Gi"
+            cpu: "1000m"
+            ephemeral-storage: "2Gi"
+          limits:
+            memory: "2Gi"
+            cpu: "2000m"
+            ephemeral-storage: "4Gi"
+        
+        # Ultra-fast health checks
+        startupProbe:
+          httpGet:
+            path: /health
+            port: http
+          initialDelaySeconds: 5
+          periodSeconds: 1
+          timeoutSeconds: 1
+          failureThreshold: 10
+          successThreshold: 1
+        
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: http
+          initialDelaySeconds: 10
+          periodSeconds: 5
+          timeoutSeconds: 1
+          failureThreshold: 3
+          successThreshold: 1
+        
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: http
+          initialDelaySeconds: 2
+          periodSeconds: 1
+          timeoutSeconds: 1
+          failureThreshold: 2
+          successThreshold: 1
+        
+        # Security context
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          runAsNonRoot: true
+          runAsUser: 1000
+          capabilities:
+            drop:
+            - ALL
+        
+        # Volume mounts for caching
+        volumeMounts:
+        - name: edge-cache
+          mountPath: /app/cache
+        - name: tmp
+          mountPath: /tmp
+        - name: model-cache
+          mountPath: /app/models
+      
+      # High-performance Redis for edge caching
+      - name: redis-edge
+        image: redis:7-alpine
+        ports:
+        - containerPort: 6379
+        command:
+        - redis-server
+        - --maxmemory
+        - 512mb
+        - --maxmemory-policy
+        - allkeys-lru
+        - --save
+        - ""
+        - --appendonly
+        - "no"
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "200m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+        volumeMounts:
+        - name: redis-data
+          mountPath: /data
+      
+      volumes:
+      - name: edge-cache
+        emptyDir:
+          sizeLimit: 1Gi
+      - name: tmp
+        emptyDir:
+          sizeLimit: 500Mi
+      - name: model-cache
+        emptyDir:
+          sizeLimit: 2Gi
+      - name: redis-data
+        emptyDir:
+          sizeLimit: 1Gi
+      
+      # DNS configuration for ultra-low latency
+      dnsPolicy: ClusterFirst
+      dnsConfig:
+        options:
+        - name: ndots
+          value: "1"
+        - name: edns0
+      
+      # Termination grace period
+      terminationGracePeriodSeconds: 5
+
+---
+# Service for edge processor
+apiVersion: v1
+kind: Service
+metadata:
+  name: electrical-edge-processor
+  namespace: electrical-estimation
+  labels:
+    app: electrical-edge-processor
+    tier: edge-computing
+  annotations:
+    cloud.google.com/neg: '{"ingress": true}'
+    service.alpha.kubernetes.io/tolerate-unready-endpoints: "true"
+spec:
+  selector:
+    app: electrical-edge-processor
+  ports:
+  - name: http
+    port: 80
+    targetPort: http
+    protocol: TCP
+  - name: metrics
+    port: 9090
+    targetPort: metrics
+    protocol: TCP
+  type: ClusterIP
+  sessionAffinity: ClientIP
+  sessionAffinityConfig:
+    clientIP:
+      timeoutSeconds: 30
+
+---
+# HPA for edge processor with aggressive scaling
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: electrical-edge-hpa
+  namespace: electrical-estimation
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: electrical-edge-processor
+  minReplicas: 3
+  maxReplicas: 20
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 50
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 60
+  # Custom metrics for latency-based scaling
+  - type: Pods
+    pods:
+      metric:
+        name: response_time_ms
+      target:
+        type: AverageValue
+        averageValue: "3"
+  
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 15
+      policies:
+      - type: Percent
+        value: 100
+        periodSeconds: 15
+      - type: Pods
+        value: 4
+        periodSeconds: 15
+      selectPolicy: Max
+    scaleDown:
+      stabilizationWindowSeconds: 30
+      policies:
+      - type: Percent
+        value: 25
+        periodSeconds: 30
+      selectPolicy: Min
+
+---
+# PodDisruptionBudget for high availability
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: electrical-edge-pdb
+  namespace: electrical-estimation
+spec:
+  minAvailable: 2
+  selector:
+    matchLabels:
+      app: electrical-edge-processor
+
+---
+# Priority class for edge processing
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: high-priority
+value: 1000
+globalDefault: false
+description: "High priority class for edge computing workloads"
+
+---
+# ServiceMonitor for Prometheus metrics
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: electrical-edge-metrics
+  namespace: electrical-estimation
+  labels:
+    app: electrical-edge-processor
+spec:
+  selector:
+    matchLabels:
+      app: electrical-edge-processor
+  endpoints:
+  - port: metrics
+    interval: 5s
+    path: /metrics
+    honorLabels: true
+
+---
+# ConfigMap for edge processor optimization
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: edge-processor-config
+  namespace: electrical-estimation
+data:
+  # Performance tuning
+  max_connections: "1000"
+  connection_timeout: "1s"
+  read_timeout: "2s"
+  write_timeout: "2s"
+  idle_timeout: "10s"
+  
+  # Cache configuration
+  cache_ttl: "300"
+  cache_max_size: "10000"
+  cache_eviction_policy: "lru"
+  
+  # Processing configuration
+  max_concurrent_calculations: "100"
+  calculation_timeout: "3s"
+  enable_calculation_cache: "true"
+  
+  # Model configuration
+  model_precision: "fp16"
+  batch_size: "32"
+  enable_gpu_acceleration: "false"
+  
+  # Monitoring configuration
+  metrics_interval: "5s"
+  log_level: "info"
+  enable_tracing: "true"
+
+---
+# Network policy for edge processor
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: edge-processor-network-policy
+  namespace: electrical-estimation
+spec:
+  podSelector:
+    matchLabels:
+      app: electrical-edge-processor
+  policyTypes:
+  - Ingress
+  - Egress
+  
+  ingress:
+  # Allow from ingress controllers
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: ingress-nginx
+    ports:
+    - protocol: TCP
+      port: 8080
+  
+  # Allow from same namespace
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: electrical-estimation
+    ports:
+    - protocol: TCP
+      port: 8080
+  
+  # Allow metrics collection
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: monitoring
+    ports:
+    - protocol: TCP
+      port: 9090
+  
+  egress:
+  # Allow DNS
+  - to: []
+    ports:
+    - protocol: UDP
+      port: 53
+  
+  # Allow database connections
+  - to: []
+    ports:
+    - protocol: TCP
+      port: 5432
+  
+  # Allow Redis connections
+  - to: []
+    ports:
+    - protocol: TCP
+      port: 6379
+  
+  # Allow HTTPS for external APIs
+  - to: []
+    ports:
+    - protocol: TCP
+      port: 443
+
+---
+# Ingress for edge processor with optimized routing
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: edge-processor-ingress
+  namespace: electrical-estimation
+  annotations:
+    kubernetes.io/ingress.class: "nginx"
+    nginx.ingress.kubernetes.io/rewrite-target: /
+    nginx.ingress.kubernetes.io/proxy-connect-timeout: "1"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3"
+    nginx.ingress.kubernetes.io/proxy-body-size: "1m"
+    nginx.ingress.kubernetes.io/rate-limit: "1000"
+    nginx.ingress.kubernetes.io/rate-limit-window: "1m"
+    nginx.ingress.kubernetes.io/enable-cors: "true"
+    nginx.ingress.kubernetes.io/cors-allow-origin: "*"
+    nginx.ingress.kubernetes.io/cors-allow-methods: "GET, POST, OPTIONS"
+    nginx.ingress.kubernetes.io/cors-allow-headers: "Content-Type, Authorization"
+spec:
+  rules:
+  - host: DOMAIN_NAME
+    http:
+      paths:
+      - path: /api/edge/
+        pathType: Prefix
+        backend:
+          service:
+            name: electrical-edge-processor
+            port:
+              number: 80
+  tls:
+  - hosts:
+    - DOMAIN_NAME
+    secretName: electrical-estimation-tls-secret

@@ -1,0 +1,452 @@
+# Cloud Armor Security Policies for Electrical Estimation System
+# WAF protection and DDoS mitigation
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cloud-armor-config
+  namespace: electrical-estimation
+data:
+  security-policy.json: |
+    {
+      "name": "electrical-estimation-security-policy",
+      "description": "Cloud Armor security policy for electrical estimation system",
+      "rules": [
+        {
+          "priority": 1000,
+          "description": "Rate limiting rule",
+          "match": {
+            "versionedExpr": "SRC_IPS_V1",
+            "config": {
+              "srcIpRanges": ["*"]
+            }
+          },
+          "action": "rate_based_ban",
+          "rateLimitOptions": {
+            "rateLimitThreshold": {
+              "count": 100,
+              "intervalSec": 60
+            },
+            "banThreshold": {
+              "count": 1000,
+              "intervalSec": 600
+            },
+            "banDurationSec": 3600,
+            "conformAction": "allow",
+            "exceedAction": "deny(429)",
+            "enforceOnKey": "IP"
+          }
+        },
+        {
+          "priority": 2000,
+          "description": "Block known bad IPs",
+          "match": {
+            "versionedExpr": "SRC_IPS_V1",
+            "config": {
+              "srcIpRanges": [
+                "192.0.2.0/24",
+                "203.0.113.0/24"
+              ]
+            }
+          },
+          "action": "deny(403)"
+        },
+        {
+          "priority": 3000,
+          "description": "Allow trusted corporate networks",
+          "match": {
+            "versionedExpr": "SRC_IPS_V1",
+            "config": {
+              "srcIpRanges": [
+                "10.0.0.0/8",
+                "172.16.0.0/12",
+                "192.168.0.0/16"
+              ]
+            }
+          },
+          "action": "allow"
+        },
+        {
+          "priority": 4000,
+          "description": "SQL injection protection",
+          "match": {
+            "expr": {
+              "expression": "request.url_map.path.matches('(?i).*union.*select.*') || request.url_map.path.contains('--') || request.url_map.path.contains(';')"
+            }
+          },
+          "action": "deny(403)"
+        },
+        {
+          "priority": 5000,
+          "description": "XSS protection",
+          "match": {
+            "expr": {
+              "expression": "request.url_map.path.matches('(?i).*<script.*>.*') || request.url_map.path.contains('javascript:') || request.url_map.path.contains('onload=')"
+            }
+          },
+          "action": "deny(403)"
+        },
+        {
+          "priority": 6000,
+          "description": "Block suspicious user agents",
+          "match": {
+            "expr": {
+              "expression": "request.headers['user-agent'].matches('(?i).*(bot|crawler|scanner|nikto|sqlmap).*') && !request.headers['user-agent'].matches('(?i).*(googlebot|bingbot).*')"
+            }
+          },
+          "action": "deny(403)"
+        },
+        {
+          "priority": 7000,
+          "description": "Geographic restriction (optional)",
+          "match": {
+            "versionedExpr": "SRC_IPS_V1",
+            "config": {
+              "srcIpRanges": ["*"]
+            }
+          },
+          "action": "allow"
+        },
+        {
+          "priority": 8000,
+          "description": "API endpoint protection",
+          "match": {
+            "expr": {
+              "expression": "request.url_map.path.startsWith('/api/') && request.method != 'GET' && request.method != 'POST'"
+            }
+          },
+          "action": "deny(405)"
+        },
+        {
+          "priority": 9000,
+          "description": "File upload protection",
+          "match": {
+            "expr": {
+              "expression": "request.url_map.path.matches('.*\\.(exe|bat|cmd|com|scr|vbs|js|jar|zip|rar)$')"
+            }
+          },
+          "action": "deny(403)"
+        },
+        {
+          "priority": 10000,
+          "description": "Default allow rule",
+          "match": {
+            "versionedExpr": "SRC_IPS_V1",
+            "config": {
+              "srcIpRanges": ["*"]
+            }
+          },
+          "action": "allow"
+        }
+      ],
+      "adaptiveProtectionConfig": {
+        "layer7DdosDefenseConfig": {
+          "enable": true,
+          "ruleVisibility": "STANDARD"
+        },
+        "autoDeployConfig": {
+          "loadThreshold": 0.1,
+          "confidenceThreshold": 0.5,
+          "impairedDurationThreshold": 60,
+          "expirationSec": 3600
+        }
+      },
+      "recaptchaOptionsConfig": {
+        "redirectSiteKey": "YOUR_RECAPTCHA_SITE_KEY"
+      }
+    }
+
+  terraform-security-policy.tf: |
+    # Terraform configuration for Cloud Armor security policy
+    resource "google_compute_security_policy" "electrical_estimation_policy" {
+      name        = "electrical-estimation-security-policy"
+      description = "Security policy for electrical estimation system"
+      project     = var.project_id
+
+      # Rate limiting rule
+      rule {
+        action   = "rate_based_ban"
+        priority = "1000"
+        match {
+          versioned_expr = "SRC_IPS_V1"
+          config {
+            src_ip_ranges = ["*"]
+          }
+        }
+        description = "Rate limiting rule"
+        rate_limit_options {
+          conform_action = "allow"
+          exceed_action  = "deny(429)"
+          enforce_on_key = "IP"
+          rate_limit_threshold {
+            count        = 100
+            interval_sec = 60
+          }
+          ban_threshold {
+            count        = 1000
+            interval_sec = 600
+          }
+          ban_duration_sec = 3600
+        }
+      }
+
+      # Block known malicious IPs
+      rule {
+        action   = "deny(403)"
+        priority = "2000"
+        match {
+          versioned_expr = "SRC_IPS_V1"
+          config {
+            src_ip_ranges = [
+              "192.0.2.0/24",
+              "203.0.113.0/24",
+              "198.51.100.0/24"
+            ]
+          }
+        }
+        description = "Block known bad IP ranges"
+      }
+
+      # SQL injection protection
+      rule {
+        action   = "deny(403)"
+        priority = "4000"
+        match {
+          expr {
+            expression = <<-EOT
+              request.url_map.path.matches('(?i).*union.*select.*') ||
+              request.url_map.path.contains('--') ||
+              request.url_map.path.contains(';') ||
+              request.url_map.path.matches('(?i).*drop.*table.*') ||
+              request.url_map.path.matches('(?i).*insert.*into.*')
+            EOT
+          }
+        }
+        description = "SQL injection protection"
+      }
+
+      # XSS protection
+      rule {
+        action   = "deny(403)"
+        priority = "5000"
+        match {
+          expr {
+            expression = <<-EOT
+              request.url_map.path.matches('(?i).*<script.*>.*') ||
+              request.url_map.path.contains('javascript:') ||
+              request.url_map.path.contains('onload=') ||
+              request.url_map.path.contains('onerror=') ||
+              request.url_map.path.matches('(?i).*<iframe.*')
+            EOT
+          }
+        }
+        description = "XSS protection"
+      }
+
+      # Block suspicious user agents
+      rule {
+        action   = "deny(403)"
+        priority = "6000"
+        match {
+          expr {
+            expression = <<-EOT
+              request.headers['user-agent'].matches('(?i).*(bot|crawler|scanner|nikto|sqlmap|nmap|masscan).*') &&
+              !request.headers['user-agent'].matches('(?i).*(googlebot|bingbot|slurp|duckduckbot).*')
+            EOT
+          }
+        }
+        description = "Block suspicious user agents"
+      }
+
+      # API rate limiting
+      rule {
+        action   = "rate_based_ban"
+        priority = "7000"
+        match {
+          expr {
+            expression = "request.url_map.path.startsWith('/api/')"
+          }
+        }
+        description = "API rate limiting"
+        rate_limit_options {
+          conform_action = "allow"
+          exceed_action  = "deny(429)"
+          enforce_on_key = "IP"
+          rate_limit_threshold {
+            count        = 50
+            interval_sec = 60
+          }
+          ban_threshold {
+            count        = 500
+            interval_sec = 600
+          }
+          ban_duration_sec = 1800
+        }
+      }
+
+      # Default allow rule
+      rule {
+        action   = "allow"
+        priority = "2147483647"
+        match {
+          versioned_expr = "SRC_IPS_V1"
+          config {
+            src_ip_ranges = ["*"]
+          }
+        }
+        description = "Default allow rule"
+      }
+
+      # Advanced DDoS protection
+      adaptive_protection_config {
+        layer_7_ddos_defense_config {
+          enable          = true
+          rule_visibility = "STANDARD"
+        }
+        auto_deploy_config {
+          load_threshold                = 0.1
+          confidence_threshold          = 0.5
+          impaired_duration_threshold   = 60
+          expiration_sec               = 3600
+        }
+      }
+
+      # Optional: reCAPTCHA configuration
+      # recaptcha_options_config {
+      #   redirect_site_key = var.recaptcha_site_key
+      # }
+    }
+
+    # Backend service with Cloud Armor policy attached
+    resource "google_compute_backend_service" "electrical_estimation_backend" {
+      name                    = "electrical-estimation-backend"
+      protocol                = "HTTP"
+      port_name               = "http"
+      load_balancing_scheme   = "EXTERNAL"
+      timeout_sec             = 30
+      enable_cdn              = true
+      security_policy         = google_compute_security_policy.electrical_estimation_policy.self_link
+      project                 = var.project_id
+
+      backend {
+        group           = var.instance_group
+        balancing_mode  = "UTILIZATION"
+        max_utilization = 0.8
+        capacity_scaler = 1.0
+      }
+
+      health_checks = [google_compute_health_check.electrical_estimation_health.self_link]
+
+      log_config {
+        enable      = true
+        sample_rate = 1.0
+      }
+
+      cdn_policy {
+        cache_mode                   = "CACHE_ALL_STATIC"
+        signed_url_cache_max_age_sec = 3600
+        default_ttl                  = 3600
+        max_ttl                      = 86400
+        client_ttl                   = 3600
+        negative_caching             = true
+        negative_caching_policy {
+          code = 404
+          ttl  = 120
+        }
+        negative_caching_policy {
+          code = 410
+          ttl  = 120
+        }
+      }
+
+      iap {
+        oauth2_client_id     = var.oauth2_client_id
+        oauth2_client_secret = var.oauth2_client_secret
+      }
+    }
+
+    # Health check for backend service
+    resource "google_compute_health_check" "electrical_estimation_health" {
+      name                = "electrical-estimation-health"
+      check_interval_sec  = 10
+      timeout_sec         = 5
+      healthy_threshold   = 2
+      unhealthy_threshold = 3
+      project             = var.project_id
+
+      http_health_check {
+        request_path = "/health"
+        port         = "80"
+      }
+
+      log_config {
+        enable = true
+      }
+    }
+
+  gcloud-deployment-script.sh: |
+    #!/bin/bash
+    # Deploy Cloud Armor security policy using gcloud
+
+    set -euo pipefail
+
+    PROJECT_ID="${PROJECT_ID:-}"
+    POLICY_NAME="electrical-estimation-security-policy"
+
+    if [[ -z "$PROJECT_ID" ]]; then
+        echo "Error: PROJECT_ID environment variable is required"
+        exit 1
+    fi
+
+    echo "Creating Cloud Armor security policy..."
+
+    # Create the security policy
+    gcloud compute security-policies create $POLICY_NAME \
+        --description "Security policy for electrical estimation system" \
+        --project $PROJECT_ID
+
+    # Add rate limiting rule
+    gcloud compute security-policies rules create 1000 \
+        --security-policy $POLICY_NAME \
+        --expression "true" \
+        --action "rate-based-ban" \
+        --rate-limit-threshold-count 100 \
+        --rate-limit-threshold-interval-sec 60 \
+        --ban-threshold-count 1000 \
+        --ban-threshold-interval-sec 600 \
+        --ban-duration-sec 3600 \
+        --conform-action allow \
+        --exceed-action deny-429 \
+        --enforce-on-key IP \
+        --project $PROJECT_ID
+
+    # Add SQL injection protection
+    gcloud compute security-policies rules create 4000 \
+        --security-policy $POLICY_NAME \
+        --expression "request.url_map.path.matches('(?i).*union.*select.*') || request.url_map.path.contains('--') || request.url_map.path.contains(';')" \
+        --action deny-403 \
+        --project $PROJECT_ID
+
+    # Add XSS protection
+    gcloud compute security-policies rules create 5000 \
+        --security-policy $POLICY_NAME \
+        --expression "request.url_map.path.matches('(?i).*<script.*>.*') || request.url_map.path.contains('javascript:') || request.url_map.path.contains('onload=')" \
+        --action deny-403 \
+        --project $PROJECT_ID
+
+    # Add suspicious user agent blocking
+    gcloud compute security-policies rules create 6000 \
+        --security-policy $POLICY_NAME \
+        --expression "request.headers['user-agent'].matches('(?i).*(bot|crawler|scanner|nikto|sqlmap).*') && !request.headers['user-agent'].matches('(?i).*(googlebot|bingbot).*')" \
+        --action deny-403 \
+        --project $PROJECT_ID
+
+    # Enable adaptive protection
+    gcloud compute security-policies update $POLICY_NAME \
+        --enable-layer7-ddos-defense \
+        --layer7-ddos-defense-rule-visibility STANDARD \
+        --project $PROJECT_ID
+
+    echo "Cloud Armor security policy created successfully: $POLICY_NAME"
+    echo "To attach to a backend service, use:"
+    echo "gcloud compute backend-services update BACKEND_SERVICE_NAME --security-policy $POLICY_NAME"

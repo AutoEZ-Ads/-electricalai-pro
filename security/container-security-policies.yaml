@@ -1,0 +1,508 @@
+# Container Security Policies and Vulnerability Scanning
+# Enterprise-grade container security with admission controllers and scanning
+
+---
+# Gatekeeper ConstraintTemplate for container security
+apiVersion: templates.gatekeeper.sh/v1beta1
+kind: ConstraintTemplate
+metadata:
+  name: containerrequiredsecurity
+spec:
+  crd:
+    spec:
+      names:
+        kind: ContainerRequiredSecurity
+      validation:
+        openAPIV3Schema:
+          type: object
+          properties:
+            requiredSecurityContext:
+              type: object
+              properties:
+                runAsNonRoot:
+                  type: boolean
+                readOnlyRootFilesystem:
+                  type: boolean
+                allowPrivilegeEscalation:
+                  type: boolean
+  targets:
+    - target: admission.k8s.gatekeeper.sh
+      rego: |
+        package containerrequiredsecurity
+
+        violation[{"msg": msg}] {
+          container := input.review.object.spec.containers[_]
+          not container.securityContext.runAsNonRoot
+          msg := sprintf("Container %v must run as non-root user", [container.name])
+        }
+
+        violation[{"msg": msg}] {
+          container := input.review.object.spec.containers[_]
+          not container.securityContext.readOnlyRootFilesystem
+          msg := sprintf("Container %v must have read-only root filesystem", [container.name])
+        }
+
+        violation[{"msg": msg}] {
+          container := input.review.object.spec.containers[_]
+          container.securityContext.allowPrivilegeEscalation
+          msg := sprintf("Container %v must not allow privilege escalation", [container.name])
+        }
+
+---
+# Constraint using the template
+apiVersion: constraints.gatekeeper.sh/v1beta1
+kind: ContainerRequiredSecurity
+metadata:
+  name: container-security-requirements
+spec:
+  match:
+    kinds:
+      - apiGroups: ["apps"]
+        kinds: ["Deployment", "DaemonSet", "StatefulSet"]
+    namespaces: ["electrical-estimation"]
+  parameters:
+    requiredSecurityContext:
+      runAsNonRoot: true
+      readOnlyRootFilesystem: true
+      allowPrivilegeEscalation: false
+
+---
+# ConstraintTemplate for required resource limits
+apiVersion: templates.gatekeeper.sh/v1beta1
+kind: ConstraintTemplate
+metadata:
+  name: containerresourcelimits
+spec:
+  crd:
+    spec:
+      names:
+        kind: ContainerResourceLimits
+      validation:
+        openAPIV3Schema:
+          type: object
+          properties:
+            maxCpu:
+              type: string
+            maxMemory:
+              type: string
+  targets:
+    - target: admission.k8s.gatekeeper.sh
+      rego: |
+        package containerresourcelimits
+
+        violation[{"msg": msg}] {
+          container := input.review.object.spec.containers[_]
+          not container.resources.limits.cpu
+          msg := sprintf("Container %v must have CPU limits", [container.name])
+        }
+
+        violation[{"msg": msg}] {
+          container := input.review.object.spec.containers[_]
+          not container.resources.limits.memory
+          msg := sprintf("Container %v must have memory limits", [container.name])
+        }
+
+        violation[{"msg": msg}] {
+          container := input.review.object.spec.containers[_]
+          cpu_limit := container.resources.limits.cpu
+          cpu_limit_int := to_number(trim_suffix(cpu_limit, "m"))
+          cpu_limit_int > 2000  # 2 CPU cores
+          msg := sprintf("Container %v CPU limit %v exceeds maximum of 2000m", [container.name, cpu_limit])
+        }
+
+---
+# Constraint for resource limits
+apiVersion: constraints.gatekeeper.sh/v1beta1
+kind: ContainerResourceLimits
+metadata:
+  name: container-resource-limits
+spec:
+  match:
+    kinds:
+      - apiGroups: ["apps"]
+        kinds: ["Deployment", "DaemonSet", "StatefulSet"]
+    namespaces: ["electrical-estimation"]
+  parameters:
+    maxCpu: "2000m"
+    maxMemory: "4Gi"
+
+---
+# ConstraintTemplate for image security
+apiVersion: templates.gatekeeper.sh/v1beta1
+kind: ConstraintTemplate
+metadata:
+  name: containerimagesecurity
+spec:
+  crd:
+    spec:
+      names:
+        kind: ContainerImageSecurity
+      validation:
+        openAPIV3Schema:
+          type: object
+          properties:
+            allowedRegistries:
+              type: array
+              items:
+                type: string
+            prohibitedTags:
+              type: array
+              items:
+                type: string
+  targets:
+    - target: admission.k8s.gatekeeper.sh
+      rego: |
+        package containerimagesecurity
+
+        violation[{"msg": msg}] {
+          container := input.review.object.spec.containers[_]
+          image := container.image
+          not starts_with(image, input.parameters.allowedRegistries[_])
+          msg := sprintf("Container %v uses unauthorized registry: %v", [container.name, image])
+        }
+
+        violation[{"msg": msg}] {
+          container := input.review.object.spec.containers[_]
+          image := container.image
+          endswith(image, input.parameters.prohibitedTags[_])
+          msg := sprintf("Container %v uses prohibited tag: %v", [container.name, image])
+        }
+
+        violation[{"msg": msg}] {
+          container := input.review.object.spec.containers[_]
+          image := container.image
+          endswith(image, ":latest")
+          msg := sprintf("Container %v must not use 'latest' tag: %v", [container.name, image])
+        }
+
+---
+# Constraint for image security
+apiVersion: constraints.gatekeeper.sh/v1beta1
+kind: ContainerImageSecurity
+metadata:
+  name: container-image-security
+spec:
+  match:
+    kinds:
+      - apiGroups: ["apps"]
+        kinds: ["Deployment", "DaemonSet", "StatefulSet"]
+    namespaces: ["electrical-estimation"]
+  parameters:
+    allowedRegistries:
+      - "gcr.io/PROJECT_ID/"
+      - "us.gcr.io/PROJECT_ID/"
+      - "eu.gcr.io/PROJECT_ID/"
+      - "asia.gcr.io/PROJECT_ID/"
+      - "docker.io/library/"  # For approved base images only
+    prohibitedTags:
+      - ":latest"
+      - ":master"
+      - ":main"
+
+---
+# Binary Authorization Policy for container image verification
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: binary-authorization-policy
+  namespace: electrical-estimation
+data:
+  policy.yaml: |
+    admissionWhitelistPatterns:
+    - namePattern: gcr.io/PROJECT_ID/*
+    - namePattern: us.gcr.io/PROJECT_ID/*
+    - namePattern: eu.gcr.io/PROJECT_ID/*
+    - namePattern: asia.gcr.io/PROJECT_ID/*
+    defaultAdmissionRule:
+      requireAttestationsBy:
+      - projects/PROJECT_ID/attestors/prod-attestor
+      enforcementMode: ENFORCED_BLOCK_AND_AUDIT_LOG
+      evaluationMode: REQUIRE_ATTESTATION
+    clusterAdmissionRules:
+      us-central1-c.electrical-estimation-cluster:
+        requireAttestationsBy:
+        - projects/PROJECT_ID/attestors/prod-attestor
+        enforcementMode: ENFORCED_BLOCK_AND_AUDIT_LOG
+        evaluationMode: REQUIRE_ATTESTATION
+    istioServiceIdentityAdmissionRules: {}
+    kubernetesNamespaceAdmissionRules:
+      electrical-estimation:
+        requireAttestationsBy:
+        - projects/PROJECT_ID/attestors/prod-attestor
+        enforcementMode: ENFORCED_BLOCK_AND_AUDIT_LOG
+        evaluationMode: REQUIRE_ATTESTATION
+    kubernetesServiceAccountAdmissionRules: {}
+    name: projects/PROJECT_ID/policy
+
+---
+# Container Analysis scanning configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: vulnerability-scanning-config
+  namespace: electrical-estimation
+data:
+  scan-policy.json: |
+    {
+      "name": "electrical-estimation-scan-policy",
+      "description": "Vulnerability scanning policy for electrical estimation containers",
+      "vulnerabilityPolicy": {
+        "maximumFixableSeverity": "MEDIUM",
+        "maximumUnfixableSeverity": "HIGH",
+        "allowedVulnerabilities": [
+          {
+            "cve": "CVE-2021-44228",
+            "note": "Log4j vulnerability - containers updated with patched version"
+          }
+        ]
+      },
+      "packageVulnerabilityPolicy": {
+        "maximumSeverity": "HIGH",
+        "allowlistCves": [
+          "CVE-2023-1234"
+        ]
+      }
+    }
+
+  # Cloud Build configuration for image scanning
+  cloudbuild-scan.yaml: |
+    steps:
+    # Build the container image
+    - name: 'gcr.io/cloud-builders/docker'
+      args: ['build', '-t', 'gcr.io/$PROJECT_ID/electrical-calculator:$COMMIT_SHA', '.']
+    
+    # Scan the image for vulnerabilities
+    - name: 'gcr.io/cloud-builders/gcloud'
+      entrypoint: 'bash'
+      args:
+      - '-c'
+      - |
+        # Wait for the image to be available
+        sleep 10
+        # Scan for vulnerabilities
+        gcloud container images scan gcr.io/$PROJECT_ID/electrical-calculator:$COMMIT_SHA \
+          --format='table(vulnerability.severity,vulnerability.cvssScore,package,version,vulnerability.description)' \
+          > vulnerability-report.txt
+        
+        # Check for critical vulnerabilities
+        CRITICAL_COUNT=$(gcloud container images scan gcr.io/$PROJECT_ID/electrical-calculator:$COMMIT_SHA \
+          --format='value(vulnerability.severity)' | grep -c "CRITICAL" || true)
+        
+        HIGH_COUNT=$(gcloud container images scan gcr.io/$PROJECT_ID/electrical-calculator:$COMMIT_SHA \
+          --format='value(vulnerability.severity)' | grep -c "HIGH" || true)
+        
+        echo "Critical vulnerabilities: $CRITICAL_COUNT"
+        echo "High vulnerabilities: $HIGH_COUNT"
+        
+        # Fail build if critical vulnerabilities found
+        if [ "$CRITICAL_COUNT" -gt 0 ]; then
+          echo "❌ Build failed: Critical vulnerabilities found"
+          cat vulnerability-report.txt
+          exit 1
+        fi
+        
+        # Warning for high vulnerabilities
+        if [ "$HIGH_COUNT" -gt 5 ]; then
+          echo "⚠️  Warning: $HIGH_COUNT high severity vulnerabilities found"
+          cat vulnerability-report.txt
+        fi
+    
+    # Push the image only if scan passes
+    - name: 'gcr.io/cloud-builders/docker'
+      args: ['push', 'gcr.io/$PROJECT_ID/electrical-calculator:$COMMIT_SHA']
+    
+    # Create attestation for Binary Authorization
+    - name: 'gcr.io/cloud-builders/gcloud'
+      entrypoint: 'bash'
+      args:
+      - '-c'
+      - |
+        # Create attestation
+        gcloud container binauthz attestations sign-and-create \
+          --artifact-url=gcr.io/$PROJECT_ID/electrical-calculator:$COMMIT_SHA \
+          --attestor=prod-attestor \
+          --attestor-project=$PROJECT_ID \
+          --keyversion-project=$PROJECT_ID \
+          --keyversion-location=global \
+          --keyversion-keyring=binauthz-keyring \
+          --keyversion-key=binauthz-key \
+          --keyversion=1
+
+    images:
+    - 'gcr.io/$PROJECT_ID/electrical-calculator:$COMMIT_SHA'
+
+---
+# Pod Disruption Budget for security and availability
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: electrical-calculator-pdb
+  namespace: electrical-estimation
+spec:
+  minAvailable: 2
+  selector:
+    matchLabels:
+      app: electrical-calculator
+
+---
+# Pod Disruption Budget for N8N
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: n8n-pdb
+  namespace: electrical-estimation
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: n8n
+
+---
+# Security scanning cronjob
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: security-scan-job
+  namespace: electrical-estimation
+spec:
+  schedule: "0 2 * * *"  # Daily at 2 AM
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          serviceAccountName: electrical-monitoring-service
+          containers:
+          - name: security-scanner
+            image: gcr.io/PROJECT_ID/security-scanner:latest
+            command:
+            - /bin/bash
+            - -c
+            - |
+              echo "Starting security scan..."
+              
+              # Scan running containers
+              kubectl get pods -n electrical-estimation -o jsonpath='{.items[*].spec.containers[*].image}' | tr ' ' '\n' | sort | uniq > /tmp/images.txt
+              
+              while read -r image; do
+                echo "Scanning image: $image"
+                gcloud container images scan "$image" --format=json > "/tmp/scan-$(echo $image | tr '/' '-' | tr ':' '-').json"
+              done < /tmp/images.txt
+              
+              # Generate security report
+              echo "Generating security report..."
+              python3 /scripts/generate-security-report.py /tmp/scan-*.json > /tmp/security-report.html
+              
+              # Upload report to Cloud Storage
+              gsutil cp /tmp/security-report.html gs://PROJECT_ID-security-reports/daily-scan-$(date +%Y%m%d).html
+              
+              echo "Security scan completed"
+            env:
+            - name: PROJECT_ID
+              value: "PROJECT_ID"
+            resources:
+              requests:
+                memory: "256Mi"
+                cpu: "100m"
+              limits:
+                memory: "512Mi"
+                cpu: "200m"
+            securityContext:
+              runAsNonRoot: true
+              runAsUser: 1001
+              readOnlyRootFilesystem: true
+              allowPrivilegeEscalation: false
+              capabilities:
+                drop:
+                - ALL
+          restartPolicy: OnFailure
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1001
+            fsGroup: 1001
+
+---
+# Emergency break-glass access role
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: emergency-access-role
+  annotations:
+    emergency-access: "true"
+    approval-required: "security-team"
+rules:
+# Emergency pod access
+- apiGroups: [""]
+  resources: ["pods", "pods/log", "pods/exec"]
+  verbs: ["get", "list", "create", "delete"]
+# Emergency service access
+- apiGroups: [""]
+  resources: ["services"]
+  verbs: ["get", "list", "create", "update", "patch", "delete"]
+# Emergency configuration access
+- apiGroups: [""]
+  resources: ["configmaps", "secrets"]
+  verbs: ["get", "list", "create", "update", "patch", "delete"]
+# Emergency deployment access
+- apiGroups: ["apps"]
+  resources: ["deployments", "replicasets"]
+  verbs: ["get", "list", "create", "update", "patch", "delete", "scale"]
+
+---
+# Emergency access binding (to be used only in emergencies)
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: emergency-access-binding
+  annotations:
+    emergency-access: "true"
+    created-by: "security-admin"
+    expiry: "24h"
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: emergency-access-role
+subjects: []  # To be populated during emergency with specific users
+
+---
+# Security event monitoring
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: security-monitoring-config
+  namespace: electrical-estimation
+data:
+  falco-rules.yaml: |
+    - rule: Unauthorized Process in Container
+      desc: Detect unauthorized processes running in containers
+      condition: >
+        spawned_process and container and
+        not proc.name in (node, npm, java, python, bash, sh) and
+        not proc.pname in (node, npm, java, python)
+      output: >
+        Unauthorized process in container (command=%proc.cmdline
+        image=%container.image.repository:%container.image.tag
+        container_id=%container.id container_name=%container.name)
+      priority: WARNING
+      tags: [container, process]
+
+    - rule: Sensitive File Access
+      desc: Detect access to sensitive files
+      condition: >
+        open_read and fd.name in (/etc/passwd, /etc/shadow, /etc/hosts, /root/.ssh/id_rsa) and
+        container
+      output: >
+        Sensitive file access (file=%fd.name command=%proc.cmdline
+        container_id=%container.id container_name=%container.name)
+      priority: CRITICAL
+      tags: [file, container]
+
+    - rule: Network Activity from Unexpected Location
+      desc: Detect network connections from unexpected sources
+      condition: >
+        inbound_outbound and fd.sport != 3002 and fd.sport != 5678 and 
+        fd.sport != 6379 and fd.sport != 5432 and container
+      output: >
+        Unexpected network activity (connection=%fd.name sport=%fd.sport dport=%fd.dport
+        container_id=%container.id container_name=%container.name)
+      priority: WARNING
+      tags: [network, container]

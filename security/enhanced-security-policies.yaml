@@ -1,0 +1,570 @@
+# Enhanced Security Policies for Electrical Estimation System
+# Enterprise-grade security with Pod Security Standards, advanced RBAC, and comprehensive monitoring
+
+---
+# Monitoring Service Account with restricted permissions
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: electrical-monitoring-service
+  namespace: electrical-estimation
+  annotations:
+    iam.gke.io/gcp-service-account: electrical-monitoring-gsa@PROJECT_ID.iam.gserviceaccount.com
+automountServiceAccountToken: true
+
+---
+# N8N Service Account with workflow-specific permissions
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: n8n-workflow-service
+  namespace: electrical-estimation
+  annotations:
+    iam.gke.io/gcp-service-account: n8n-workflow-gsa@PROJECT_ID.iam.gserviceaccount.com
+automountServiceAccountToken: true
+
+---
+# Backup Service Account for data operations
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: electrical-backup-service
+  namespace: electrical-estimation
+  annotations:
+    iam.gke.io/gcp-service-account: electrical-backup-gsa@PROJECT_ID.iam.gserviceaccount.com
+automountServiceAccountToken: true
+
+---
+# Enhanced ClusterRole for electrical services with granular permissions
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: electrical-estimation-enhanced-role
+rules:
+# Core resource access
+- apiGroups: [""]
+  resources: ["configmaps"]
+  verbs: ["get", "list", "watch"]
+  resourceNames: ["security-config", "electrical-config"]
+- apiGroups: [""]
+  resources: ["secrets"]
+  verbs: ["get", "list", "watch"]
+  resourceNames: ["database-credentials", "n8n-credentials", "electrical-estimation-tls-secret"]
+# Pod management for health checks and scaling
+- apiGroups: [""]
+  resources: ["pods"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: [""]
+  resources: ["pods/log"]
+  verbs: ["get", "list"]
+# Service discovery
+- apiGroups: [""]
+  resources: ["services", "endpoints"]
+  verbs: ["get", "list", "watch"]
+# Metrics and monitoring
+- apiGroups: ["metrics.k8s.io"]
+  resources: ["pods", "nodes"]
+  verbs: ["get", "list"]
+# Custom metrics for auto-scaling
+- apiGroups: ["custom.metrics.k8s.io"]
+  resources: ["*"]
+  verbs: ["get", "list"]
+
+---
+# Monitoring-specific Role
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: electrical-monitoring-role
+rules:
+# Read-only access to monitoring resources
+- apiGroups: [""]
+  resources: ["pods", "services", "endpoints", "nodes"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: ["apps"]
+  resources: ["deployments", "replicasets"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: ["metrics.k8s.io"]
+  resources: ["*"]
+  verbs: ["get", "list"]
+- apiGroups: ["monitoring.coreos.com"]
+  resources: ["servicemonitors", "prometheusrules"]
+  verbs: ["get", "list", "watch", "create", "update", "patch"]
+
+---
+# N8N Workflow Role with limited permissions
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  namespace: electrical-estimation
+  name: n8n-workflow-role
+rules:
+# Access to workflow-related ConfigMaps and Secrets
+- apiGroups: [""]
+  resources: ["configmaps"]
+  verbs: ["get", "list", "watch", "create", "update", "patch"]
+  resourceNames: ["n8n-workflows", "workflow-config"]
+- apiGroups: [""]
+  resources: ["secrets"]
+  verbs: ["get", "list", "watch"]
+  resourceNames: ["n8n-credentials", "workflow-secrets"]
+# Read-only access to pods for status checking
+- apiGroups: [""]
+  resources: ["pods"]
+  verbs: ["get", "list", "watch"]
+
+---
+# Backup Role with data access permissions
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  namespace: electrical-estimation
+  name: electrical-backup-role
+rules:
+# Access to persistent volumes for backup operations
+- apiGroups: [""]
+  resources: ["persistentvolumes", "persistentvolumeclaims"]
+  verbs: ["get", "list", "watch"]
+# Read access to application data
+- apiGroups: [""]
+  resources: ["configmaps", "secrets"]
+  verbs: ["get", "list"]
+# Pod execution for backup jobs
+- apiGroups: ["batch"]
+  resources: ["jobs", "cronjobs"]
+  verbs: ["get", "list", "watch", "create", "update", "patch"]
+
+---
+# Enhanced ClusterRoleBinding
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: electrical-estimation-enhanced-binding
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: electrical-estimation-enhanced-role
+subjects:
+- kind: ServiceAccount
+  name: electrical-estimation-service
+  namespace: electrical-estimation
+
+---
+# Monitoring ClusterRoleBinding
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: electrical-monitoring-binding
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: electrical-monitoring-role
+subjects:
+- kind: ServiceAccount
+  name: electrical-monitoring-service
+  namespace: electrical-estimation
+
+---
+# N8N RoleBinding
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  namespace: electrical-estimation
+  name: n8n-workflow-binding
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: n8n-workflow-role
+subjects:
+- kind: ServiceAccount
+  name: n8n-workflow-service
+  namespace: electrical-estimation
+
+---
+# Backup RoleBinding
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  namespace: electrical-estimation
+  name: electrical-backup-binding
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: electrical-backup-role
+subjects:
+- kind: ServiceAccount
+  name: electrical-backup-service
+  namespace: electrical-estimation
+
+---
+# Advanced NetworkPolicy for micro-segmentation
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: electrical-calculator-network-policy
+  namespace: electrical-estimation
+spec:
+  podSelector:
+    matchLabels:
+      app: electrical-calculator
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  # Allow ingress from ingress controller
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: ingress-nginx
+    - podSelector:
+        matchLabels:
+          app.kubernetes.io/name: ingress-nginx
+    ports:
+    - protocol: TCP
+      port: 3002
+  # Allow ingress from monitoring (Prometheus)
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: monitoring
+    - podSelector:
+        matchLabels:
+          app: prometheus
+    ports:
+    - protocol: TCP
+      port: 3002
+  # Allow ingress from N8N for workflow execution
+  - from:
+    - podSelector:
+        matchLabels:
+          app: n8n
+    ports:
+    - protocol: TCP
+      port: 3002
+  egress:
+  # Allow DNS resolution
+  - to: []
+    ports:
+    - protocol: UDP
+      port: 53
+    - protocol: TCP
+      port: 53
+  # Allow Cloud SQL connections (private IP)
+  - to:
+    - namespaceSelector: {}
+      podSelector:
+        matchLabels:
+          app: cloud-sql-proxy
+    ports:
+    - protocol: TCP
+      port: 5432
+  # Allow Redis connections
+  - to:
+    - podSelector:
+        matchLabels:
+          app: redis
+    ports:
+    - protocol: TCP
+      port: 6379
+  # Allow HTTPS for external API calls
+  - to: []
+    ports:
+    - protocol: TCP
+      port: 443
+  # Allow monitoring metrics
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          name: monitoring
+    ports:
+    - protocol: TCP
+      port: 9090
+
+---
+# NetworkPolicy for N8N
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: n8n-network-policy
+  namespace: electrical-estimation
+spec:
+  podSelector:
+    matchLabels:
+      app: n8n
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  # Allow ingress from ingress controller
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: ingress-nginx
+    ports:
+    - protocol: TCP
+      port: 5678
+  # Allow health checks
+  - from: []
+    ports:
+    - protocol: TCP
+      port: 5678
+  egress:
+  # Allow DNS resolution
+  - to: []
+    ports:
+    - protocol: UDP
+      port: 53
+  # Allow database connections
+  - to:
+    - podSelector:
+        matchLabels:
+          app: cloud-sql-proxy
+    ports:
+    - protocol: TCP
+      port: 5432
+  # Allow Redis connections
+  - to:
+    - podSelector:
+        matchLabels:
+          app: redis
+    ports:
+    - protocol: TCP
+      port: 6379
+  # Allow electrical calculator communication
+  - to:
+    - podSelector:
+        matchLabels:
+          app: electrical-calculator
+    ports:
+    - protocol: TCP
+      port: 3002
+  # Allow HTTPS for webhooks and external integrations
+  - to: []
+    ports:
+    - protocol: TCP
+      port: 443
+    - protocol: TCP
+      port: 80
+
+---
+# Pod Security Standards (replacing deprecated PodSecurityPolicy)
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: electrical-estimation
+  labels:
+    name: electrical-estimation
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/warn: restricted
+
+---
+# Security Context Constraints for enhanced container security
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: security-context-config
+  namespace: electrical-estimation
+data:
+  recommended-security-context.yaml: |
+    securityContext:
+      runAsNonRoot: true
+      runAsUser: 1001
+      runAsGroup: 1001
+      fsGroup: 1001
+      seccompProfile:
+        type: RuntimeDefault
+      capabilities:
+        drop:
+        - ALL
+      allowPrivilegeEscalation: false
+      readOnlyRootFilesystem: true
+
+---
+# Advanced Secret for API keys and sensitive configuration  
+apiVersion: v1
+kind: Secret
+metadata:
+  name: api-credentials
+  namespace: electrical-estimation
+  annotations:
+    secret-manager.csp.gke.io/secret-id: "electrical-api-keys"
+type: Opaque
+data:
+  monday_api_token: ""  # Will be populated from Google Secret Manager
+  openai_api_key: ""    # Will be populated from Google Secret Manager
+  webhook_secret: ""    # Will be populated from Google Secret Manager
+
+---
+# Secret for TLS certificates
+apiVersion: v1
+kind: Secret
+metadata:
+  name: internal-tls-certificates
+  namespace: electrical-estimation
+type: kubernetes.io/tls
+data:
+  tls.crt: ""  # Will be populated by cert-manager
+  tls.key: ""  # Will be populated by cert-manager
+
+---
+# ConfigMap for audit logging configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: audit-policy-config
+  namespace: electrical-estimation
+data:
+  audit-policy.yaml: |
+    apiVersion: audit.k8s.io/v1
+    kind: Policy
+    rules:
+    # Log security events at RequestResponse level
+    - level: RequestResponse
+      namespaces: ["electrical-estimation"]
+      resources:
+      - group: ""
+        resources: ["secrets", "configmaps"]
+      - group: "rbac.authorization.k8s.io"
+        resources: ["roles", "rolebindings", "clusterroles", "clusterrolebindings"]
+    # Log access to sensitive resources
+    - level: Request
+      namespaces: ["electrical-estimation"]
+      resources:
+      - group: ""
+        resources: ["pods", "services"]
+      verbs: ["get", "list", "create", "update", "patch", "delete"]
+    # Log authentication events
+    - level: Metadata
+      resources:
+      - group: "authentication.k8s.io"
+        resources: ["tokenreviews"]
+
+---
+# Resource Quotas for security and resource management
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: electrical-estimation-quota
+  namespace: electrical-estimation
+spec:
+  hard:
+    requests.cpu: "10"
+    requests.memory: "20Gi"
+    limits.cpu: "20"
+    limits.memory: "40Gi"
+    persistenvolumeclaims: "10"
+    secrets: "20"
+    configmaps: "20"
+    services.loadbalancers: "3"
+    services.nodeports: "5"
+
+---
+# Limit Range for pod security
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: electrical-estimation-limits
+  namespace: electrical-estimation
+spec:
+  limits:
+  - type: Container
+    default:
+      cpu: "500m"
+      memory: "1Gi"
+      ephemeral-storage: "2Gi"
+    defaultRequest:
+      cpu: "100m"
+      memory: "256Mi"
+      ephemeral-storage: "500Mi"
+    max:
+      cpu: "2"
+      memory: "4Gi"
+      ephemeral-storage: "10Gi"
+    min:
+      cpu: "50m"
+      memory: "128Mi"
+      ephemeral-storage: "100Mi"
+  - type: PersistentVolumeClaim
+    max:
+      storage: "100Gi"
+    min:
+      storage: "1Gi"
+
+---
+# Security monitoring ServiceMonitor
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: security-metrics
+  namespace: electrical-estimation
+  labels:
+    app: security-monitoring
+spec:
+  selector:
+    matchLabels:
+      app: electrical-calculator
+  endpoints:
+  - port: metrics
+    interval: 30s
+    path: /metrics
+    honorLabels: true
+
+---
+# PrometheusRule for security alerting
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: security-alerts
+  namespace: electrical-estimation
+spec:
+  groups:
+  - name: security.rules
+    rules:
+    # Alert on failed authentication attempts
+    - alert: HighFailedAuthentications
+      expr: increase(http_requests_total{code=~"401|403"}[5m]) > 10
+      for: 2m
+      labels:
+        severity: warning
+        service: electrical-estimation
+        category: security
+      annotations:
+        summary: "High number of failed authentication attempts"
+        description: "{{ $value }} failed authentication attempts in the last 5 minutes"
+    
+    # Alert on unusual API access patterns
+    - alert: UnusualAPIAccess
+      expr: rate(http_requests_total[5m]) > 100
+      for: 5m
+      labels:
+        severity: warning
+        service: electrical-estimation
+        category: security
+      annotations:
+        summary: "Unusual API access pattern detected"
+        description: "Request rate is {{ $value }} requests/second"
+    
+    # Alert on pod security policy violations
+    - alert: SecurityPolicyViolation
+      expr: increase(pod_security_policy_violations_total[15m]) > 0
+      for: 1m
+      labels:
+        severity: critical
+        service: electrical-estimation
+        category: security
+      annotations:
+        summary: "Pod security policy violation detected"
+        description: "{{ $value }} security policy violations in the last 15 minutes"
+    
+    # Alert on certificate expiration
+    - alert: CertificateExpiring
+      expr: (x509_cert_not_after - time()) / 86400 < 30
+      for: 1h
+      labels:
+        severity: warning
+        service: electrical-estimation
+        category: security
+      annotations:
+        summary: "SSL certificate expiring soon"
+        description: "Certificate expires in {{ $value }} days"

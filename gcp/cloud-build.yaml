@@ -1,0 +1,330 @@
+# Google Cloud Build configuration for Electrical Estimation System
+# Automated CI/CD pipeline for building and deploying the system
+
+steps:
+# Step 1: Setup and authentication
+- name: 'gcr.io/cloud-builders/gcloud'
+  id: 'setup'
+  entrypoint: 'bash'
+  args:
+  - '-c'
+  - |
+    echo "Setting up build environment..."
+    gcloud config set project $PROJECT_ID
+    gcloud auth configure-docker
+    echo "Build ID: $BUILD_ID"
+    echo "Branch: $BRANCH_NAME"
+    echo "Commit: $COMMIT_SHA"
+
+# Step 2: Build backend Docker image
+- name: 'gcr.io/cloud-builders/docker'
+  id: 'build-backend'
+  args:
+  - 'build'
+  - '-t'
+  - 'gcr.io/$PROJECT_ID/electrical-backend:$COMMIT_SHA'
+  - '-t'
+  - 'gcr.io/$PROJECT_ID/electrical-backend:latest'
+  - '-f'
+  - 'webapp/backend/Dockerfile'
+  - 'webapp/backend/'
+  waitFor: ['setup']
+
+# Step 3: Build frontend Docker image
+- name: 'gcr.io/cloud-builders/docker'
+  id: 'build-frontend'
+  args:
+  - 'build'
+  - '-t'
+  - 'gcr.io/$PROJECT_ID/electrical-frontend:$COMMIT_SHA'
+  - '-t'
+  - 'gcr.io/$PROJECT_ID/electrical-frontend:latest'
+  - '-f'
+  - 'webapp/frontend/Dockerfile'
+  - 'webapp/frontend/'
+  waitFor: ['setup']
+
+# Step 4: Build electrical calculator service
+- name: 'gcr.io/cloud-builders/docker'
+  id: 'build-calculator'
+  args:
+  - 'build'
+  - '-t'
+  - 'gcr.io/$PROJECT_ID/electrical-calculator:$COMMIT_SHA'
+  - '-t'
+  - 'gcr.io/$PROJECT_ID/electrical-calculator:latest'
+  - '-f'
+  - 'plugins/electrical-calculator/Dockerfile'
+  - 'plugins/electrical-calculator/'
+  waitFor: ['setup']
+
+# Step 5: Build material database service
+- name: 'gcr.io/cloud-builders/docker'
+  id: 'build-materials'
+  args:
+  - 'build'
+  - '-t'
+  - 'gcr.io/$PROJECT_ID/material-database:$COMMIT_SHA'
+  - '-t'
+  - 'gcr.io/$PROJECT_ID/material-database:latest'
+  - '-f'
+  - 'plugins/material-database/Dockerfile'
+  - 'plugins/material-database/'
+  waitFor: ['setup']
+
+# Step 6: Build report generator service
+- name: 'gcr.io/cloud-builders/docker'
+  id: 'build-reports'
+  args:
+  - 'build'
+  - '-t'
+  - 'gcr.io/$PROJECT_ID/report-generator:$COMMIT_SHA'
+  - '-t'
+  - 'gcr.io/$PROJECT_ID/report-generator:latest'
+  - '-f'
+  - 'plugins/report-generator/Dockerfile'
+  - 'plugins/report-generator/'
+  waitFor: ['setup']
+
+# Step 7: Run backend tests
+- name: 'gcr.io/cloud-builders/docker'
+  id: 'test-backend'
+  args:
+  - 'run'
+  - '--rm'
+  - 'gcr.io/$PROJECT_ID/electrical-backend:$COMMIT_SHA'
+  - 'npm'
+  - 'test'
+  waitFor: ['build-backend']
+
+# Step 8: Run frontend tests
+- name: 'gcr.io/cloud-builders/docker'
+  id: 'test-frontend'
+  args:
+  - 'run'
+  - '--rm'
+  - 'gcr.io/$PROJECT_ID/electrical-frontend:$COMMIT_SHA'
+  - 'npm'
+  - 'test'
+  - '--'
+  - '--watchAll=false'
+  waitFor: ['build-frontend']
+
+# Step 9: Security scanning with Container Analysis
+- name: 'gcr.io/cloud-builders/gcloud'
+  id: 'security-scan'
+  entrypoint: 'bash'
+  args:
+  - '-c'
+  - |
+    echo "Running security scans..."
+    gcloud beta container images scan gcr.io/$PROJECT_ID/electrical-backend:$COMMIT_SHA
+    gcloud beta container images scan gcr.io/$PROJECT_ID/electrical-frontend:$COMMIT_SHA
+    gcloud beta container images scan gcr.io/$PROJECT_ID/electrical-calculator:$COMMIT_SHA
+  waitFor: ['build-backend', 'build-frontend', 'build-calculator']
+
+# Step 10: Push images to Container Registry
+- name: 'gcr.io/cloud-builders/docker'
+  id: 'push-images'
+  entrypoint: 'bash'
+  args:
+  - '-c'
+  - |
+    echo "Pushing Docker images..."
+    docker push gcr.io/$PROJECT_ID/electrical-backend:$COMMIT_SHA
+    docker push gcr.io/$PROJECT_ID/electrical-backend:latest
+    docker push gcr.io/$PROJECT_ID/electrical-frontend:$COMMIT_SHA
+    docker push gcr.io/$PROJECT_ID/electrical-frontend:latest
+    docker push gcr.io/$PROJECT_ID/electrical-calculator:$COMMIT_SHA
+    docker push gcr.io/$PROJECT_ID/electrical-calculator:latest
+    docker push gcr.io/$PROJECT_ID/material-database:$COMMIT_SHA
+    docker push gcr.io/$PROJECT_ID/material-database:latest
+    docker push gcr.io/$PROJECT_ID/report-generator:$COMMIT_SHA
+    docker push gcr.io/$PROJECT_ID/report-generator:latest
+  waitFor: ['test-backend', 'test-frontend', 'security-scan']
+
+# Step 11: Deploy to Cloud Run (for microservices)
+- name: 'gcr.io/cloud-builders/gcloud'
+  id: 'deploy-cloud-run'
+  entrypoint: 'bash'
+  args:
+  - '-c'
+  - |
+    if [ "$BRANCH_NAME" = "main" ] || [ "$BRANCH_NAME" = "master" ]; then
+      echo "Deploying to Cloud Run..."
+      
+      # Deploy electrical calculator
+      gcloud run deploy electrical-calculator \
+        --image=gcr.io/$PROJECT_ID/electrical-calculator:$COMMIT_SHA \
+        --platform=managed \
+        --region=us-central1 \
+        --allow-unauthenticated \
+        --memory=2Gi \
+        --cpu=2 \
+        --max-instances=100 \
+        --set-env-vars="PROJECT_ID=$PROJECT_ID"
+      
+      # Deploy material database
+      gcloud run deploy material-database \
+        --image=gcr.io/$PROJECT_ID/material-database:$COMMIT_SHA \
+        --platform=managed \
+        --region=us-central1 \
+        --allow-unauthenticated \
+        --memory=2Gi \
+        --cpu=2 \
+        --max-instances=100 \
+        --set-env-vars="PROJECT_ID=$PROJECT_ID"
+      
+      # Deploy report generator
+      gcloud run deploy report-generator \
+        --image=gcr.io/$PROJECT_ID/report-generator:$COMMIT_SHA \
+        --platform=managed \
+        --region=us-central1 \
+        --allow-unauthenticated \
+        --memory=2Gi \
+        --cpu=2 \
+        --max-instances=100 \
+        --set-env-vars="PROJECT_ID=$PROJECT_ID"
+      
+      echo "Cloud Run deployment completed"
+    else
+      echo "Skipping Cloud Run deployment for non-main branch: $BRANCH_NAME"
+    fi
+  waitFor: ['push-images']
+
+# Step 12: Deploy to GKE (conditional on branch)
+- name: 'gcr.io/cloud-builders/kubectl'
+  id: 'deploy-gke'
+  entrypoint: 'bash'
+  args:
+  - '-c'
+  - |
+    if [ "$BRANCH_NAME" = "main" ] || [ "$BRANCH_NAME" = "master" ]; then
+      echo "Deploying to GKE..."
+      
+      # Get GKE credentials
+      gcloud container clusters get-credentials electrical-estimation-prod \
+        --region=us-central1 \
+        --project=$PROJECT_ID
+      
+      # Update image tags in Kubernetes manifests
+      sed -i "s|gcr.io/PROJECT_ID|gcr.io/$PROJECT_ID|g" gcp/kubernetes/*.yaml
+      sed -i "s|:latest|:$COMMIT_SHA|g" gcp/kubernetes/*.yaml
+      
+      # Apply Kubernetes manifests
+      kubectl apply -f gcp/kubernetes/
+      
+      # Wait for rollout to complete
+      kubectl rollout status deployment/n8n -n electrical-estimation --timeout=600s
+      kubectl rollout status deployment/backend-api -n electrical-estimation --timeout=600s
+      
+      echo "GKE deployment completed"
+    else
+      echo "Skipping GKE deployment for non-main branch: $BRANCH_NAME"
+    fi
+  env:
+  - 'CLOUDSDK_COMPUTE_ZONE=us-central1-a'
+  - 'CLOUDSDK_CONTAINER_CLUSTER=electrical-estimation-prod'
+  waitFor: ['push-images']
+
+# Step 13: Run integration tests
+- name: 'gcr.io/cloud-builders/curl'
+  id: 'integration-tests'
+  entrypoint: 'bash'
+  args:
+  - '-c'
+  - |
+    echo "Running integration tests..."
+    
+    # Wait for services to be ready
+    sleep 60
+    
+    # Test API health endpoint
+    if curl -f -s https://electrical-estimation.yourcompany.com/health; then
+      echo "✅ API health check passed"
+    else
+      echo "❌ API health check failed"
+      exit 1
+    fi
+    
+    # Test N8N health endpoint
+    if curl -f -s https://electrical-estimation.yourcompany.com/healthz; then
+      echo "✅ N8N health check passed"
+    else
+      echo "❌ N8N health check failed"
+      exit 1
+    fi
+    
+    echo "Integration tests completed successfully"
+  waitFor: ['deploy-gke', 'deploy-cloud-run']
+
+# Step 14: Notify deployment status
+- name: 'gcr.io/cloud-builders/gcloud'
+  id: 'notify'
+  entrypoint: 'bash'
+  args:
+  - '-c'
+  - |
+    echo "Sending deployment notification..."
+    
+    # Send Slack notification (if webhook configured)
+    if [ ! -z "$_SLACK_WEBHOOK" ]; then
+      curl -X POST -H 'Content-type: application/json' \
+        --data "{\"text\":\"✅ Electrical Estimation System deployed successfully\n• Build ID: $BUILD_ID\n• Commit: $COMMIT_SHA\n• Branch: $BRANCH_NAME\"}" \
+        $_SLACK_WEBHOOK
+    fi
+    
+    # Log deployment details
+    echo "🎉 Deployment completed successfully!"
+    echo "Build ID: $BUILD_ID"
+    echo "Commit SHA: $COMMIT_SHA"
+    echo "Branch: $BRANCH_NAME"
+    echo "Images pushed:"
+    echo "  - gcr.io/$PROJECT_ID/electrical-backend:$COMMIT_SHA"
+    echo "  - gcr.io/$PROJECT_ID/electrical-frontend:$COMMIT_SHA"
+    echo "  - gcr.io/$PROJECT_ID/electrical-calculator:$COMMIT_SHA"
+    echo "  - gcr.io/$PROJECT_ID/material-database:$COMMIT_SHA"
+    echo "  - gcr.io/$PROJECT_ID/report-generator:$COMMIT_SHA"
+  waitFor: ['integration-tests']
+
+# Build options
+options:
+  # Use high-CPU machine for faster builds
+  machineType: 'E2_HIGHCPU_8'
+  
+  # Disk size for build
+  diskSizeGb: 100
+  
+  # Logging options
+  logging: CLOUD_LOGGING_ONLY
+  
+  # Worker pool (if using private pool)
+  # pool:
+  #   name: 'projects/$PROJECT_ID/locations/us-central1/workerPools/electrical-build-pool'
+
+# Timeout for entire build
+timeout: '3600s'  # 1 hour
+
+# Substitutions (can be overridden)
+substitutions:
+  _SLACK_WEBHOOK: ''  # Set this in trigger or environment
+
+# Images to be pushed to Container Registry
+images:
+- 'gcr.io/$PROJECT_ID/electrical-backend:$COMMIT_SHA'
+- 'gcr.io/$PROJECT_ID/electrical-backend:latest'
+- 'gcr.io/$PROJECT_ID/electrical-frontend:$COMMIT_SHA'
+- 'gcr.io/$PROJECT_ID/electrical-frontend:latest'
+- 'gcr.io/$PROJECT_ID/electrical-calculator:$COMMIT_SHA'
+- 'gcr.io/$PROJECT_ID/electrical-calculator:latest'
+- 'gcr.io/$PROJECT_ID/material-database:$COMMIT_SHA'
+- 'gcr.io/$PROJECT_ID/material-database:latest'
+- 'gcr.io/$PROJECT_ID/report-generator:$COMMIT_SHA'
+- 'gcr.io/$PROJECT_ID/report-generator:latest'
+
+# Build tags for organization
+tags:
+- 'electrical-estimation'
+- 'n8n'
+- 'gke'
+- 'cloud-run'
