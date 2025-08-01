@@ -8,7 +8,8 @@ class N8NService {
   }
 
   initialize(config) {
-    this.baseUrl = config.baseUrl;
+    // Use production N8N URL by default
+    this.baseUrl = config.baseUrl || 'https://electricalai-n8n.onrender.com';
     this.apiKey = config.apiKey;
     
     this.client = axios.create({

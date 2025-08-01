@@ -1,7 +1,7 @@
 {
-  "name": "ElectricalAI Pro - Construction Estimator",
+  "name": "Electrical Estimation Pro",
   "shortName": "ElectricalAI Pro",
-  "description": "AI-powered electrical construction estimation with automated NEC compliance checking, real-time material cost tracking, and project progress monitoring. Seamlessly integrates with N8N workflow automation.",
+  "description": "AI-powered electrical estimation for low voltage contractors with automated NEC compliance checking, real-time material cost tracking, and project progress monitoring. Seamlessly integrates with N8N workflow automation.",
   "longDescription": "Transform your electrical construction projects with ElectricalAI Pro's comprehensive estimation platform. Our app combines advanced AI analysis with industry-standard NEC 2023 compliance checking to deliver 94% accurate estimates in seconds. Features include automated floor plan analysis, real-time material cost tracking with live copper pricing, project progress monitoring with predictive analytics, and complete workflow automation through N8N integration. Perfect for electrical contractors, construction managers, and project teams who need reliable, code-compliant estimates with complete audit trails.",
   "version": "1.0.0",
   "versionName": "Production Release",
@@ -23,8 +23,8 @@
   "features": [
     {
       "type": "ItemView",
-      "name": "Project Estimator",
-      "url": "/item-view",
+      "name": "Estimate Details",
+      "url": "https://electricalai-monday-app.onrender.com/item-view",
       "urlPath": "item-view",
       "height": 500,
       "assets": [
@@ -35,7 +35,7 @@
     {
       "type": "BoardView", 
       "name": "Estimation Dashboard",
-      "url": "/board-view",
+      "url": "https://electricalai-monday-app.onrender.com/board-view",
       "urlPath": "board-view",
       "height": 400,
       "assets": [
@@ -46,7 +46,7 @@
     {
       "type": "IntegrationView",
       "name": "Workflow Configuration",
-      "url": "/integration-view",
+      "url": "https://electricalai-monday-app.onrender.com/integration-view",
       "urlPath": "integration-view",
       "height": 600,
       "assets": [
@@ -68,7 +68,7 @@
     "webhooks:read",
     "webhooks:write"
   ],
-  "webhookUrl": "https://electricalai-monday-app.onrender.com/webhook",
+  "webhookUrl": "https://electricalai-pro.onrender.com/monday-webhook",
   "webhookEvents": [
     "create_item",
     "change_column_value",
@@ -91,7 +91,7 @@
       "description": "Your N8N workflow automation instance URL",
       "type": "text",
       "required": true,
-      "defaultValue": "https://your-n8n-instance.com"
+      "defaultValue": "https://electricalai-n8n.onrender.com"
     },
     {
       "key": "api_key",

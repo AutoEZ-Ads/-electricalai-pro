@@ -1,0 +1,160 @@
+{
+  "name": "Electrical Estimation Pro",
+  "description": "AI-powered electrical estimation for low voltage contractors",
+  "version": "1.0.0",
+  "api_version": "2023-10",
+  "features": [
+    {
+      "type": "board_view",
+      "name": "Estimation Dashboard",
+      "url": "https://electricalai-monday-app.onrender.com/board-view"
+    },
+    {
+      "type": "item_view", 
+      "name": "Estimate Details",
+      "url": "https://electricalai-monday-app.onrender.com/item-view"
+    },
+    {
+      "type": "integration_view",
+      "name": "Workflow Configuration", 
+      "url": "https://electricalai-monday-app.onrender.com/integration-view"
+    }
+  ],
+  "scopes": [
+    "boards:read",
+    "boards:write",
+    "columns:read",
+    "columns:write", 
+    "items:read",
+    "items:write",
+    "updates:read",
+    "updates:write",
+    "files:read",
+    "files:write",
+    "users:read",
+    "webhooks:read",
+    "webhooks:write"
+  ],
+  "webhook_url": "https://electricalai-pro.onrender.com/monday-webhook",
+  "webhook_events": [
+    "create_item",
+    "change_column_value",
+    "create_update",
+    "item_deleted"
+  ],
+  "configuration_fields": [
+    {
+      "key": "n8n_instance_url",
+      "name": "N8N Instance URL",
+      "description": "Your N8N workflow automation instance URL",
+      "type": "text",
+      "required": true,
+      "default_value": "https://electricalai-n8n.onrender.com"
+    },
+    {
+      "key": "api_key",
+      "name": "ElectricalAI API Key",
+      "description": "Your ElectricalAI Pro API key for advanced features",
+      "type": "password",
+      "required": true
+    },
+    {
+      "key": "default_project_type",
+      "name": "Default Project Type",
+      "description": "Default project type for new estimations",
+      "type": "dropdown",
+      "options": [
+        {"value": "residential", "label": "Residential"},
+        {"value": "commercial", "label": "Commercial"},
+        {"value": "industrial", "label": "Industrial"}
+      ],
+      "default_value": "residential"
+    },
+    {
+      "key": "enable_auto_compliance",
+      "name": "Auto NEC Compliance Check",
+      "description": "Automatically run NEC compliance checks on new projects",
+      "type": "checkbox",
+      "default_value": true
+    },
+    {
+      "key": "cost_tracking_enabled",
+      "name": "Real-time Cost Tracking",
+      "description": "Enable real-time material cost tracking and alerts",
+      "type": "checkbox", 
+      "default_value": true
+    }
+  ],
+  "hosting": {
+    "url": "https://electricalai-monday-app.onrender.com"
+  },
+  "pricing": {
+    "model": "freemium",
+    "plans": [
+      {
+        "name": "Starter",
+        "price": 0,
+        "currency": "USD",
+        "period": "monthly",
+        "features": [
+          "5 estimates per month",
+          "Basic NEC compliance check",
+          "Standard material cost data"
+        ]
+      },
+      {
+        "name": "Professional", 
+        "price": 29,
+        "currency": "USD",
+        "period": "monthly",
+        "features": [
+          "Unlimited estimates",
+          "Advanced NEC compliance with certificates",
+          "Real-time material cost tracking",
+          "Floor plan AI analysis",
+          "Project progress monitoring"
+        ]
+      },
+      {
+        "name": "Enterprise",
+        "price": 99,
+        "currency": "USD", 
+        "period": "monthly",
+        "features": [
+          "Everything in Professional",
+          "Custom workflow automation",
+          "Bulk project processing",
+          "Advanced analytics and reporting",
+          "Priority support"
+        ]
+      }
+    ]
+  },
+  "support": {
+    "email": "support@electricalai.pro",
+    "documentation": "https://docs.electricalai.pro/monday-app",
+    "help_center": "https://help.electricalai.pro"
+  },
+  "compliance": {
+    "data_retention": "2 years",
+    "data_location": "US",
+    "gdpr_compliant": true,
+    "encryption_in_transit": true,
+    "encryption_at_rest": true
+  },
+  "developer": {
+    "name": "ElectricalAI Pro",
+    "email": "support@electricalai.pro",
+    "website": "https://electricalai.pro"
+  },
+  "categories": ["productivity", "project_management", "integrations"],
+  "supported_languages": ["en"],
+  "icon": "./assets/icon.png",
+  "large_icon": "./assets/large-icon.png",
+  "screenshots": [
+    "./assets/screenshot-1.png",
+    "./assets/screenshot-2.png", 
+    "./assets/screenshot-3.png",
+    "./assets/screenshot-4.png"
+  ]
+}
