@@ -1,25 +1,108 @@
-# Render.com Blueprint for ElectricalAI Pro Platform
-# Complete production deployment configuration
-
 services:
-  # ================================
-  # N8N WORKFLOW AUTOMATION
-  # ================================
+  # Main ElectricalAI Backend API
+  - type: web
+    name: electricalai-backend
+    env: node
+    region: oregon
+    plan: standard
+    buildCommand: cd webapp/backend && npm install && npm run build
+    startCommand: cd webapp/backend && npm start
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 10000
+      - key: N8N_WEBHOOK_URL
+        value: https://electricalai-n8n.onrender.com
+      - key: MONDAY_API_TOKEN
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: ELECTRICALAI_API_KEY
+        sync: false
+      - key: DATABASE_URL
+        fromDatabase:
+          name: electricalai-db
+          property: connectionString
+      - key: REDIS_URL
+        fromService:
+          type: redis
+          name: electricalai-cache
+          property: connectionString
+      - key: JWT_SECRET
+        generateValue: true
+      - key: ENCRYPTION_KEY
+        generateValue: true
+      - key: LOG_LEVEL
+        value: info
+      - key: CORS_ORIGIN
+        value: https://electricalai-frontend.onrender.com,https://monday.com
+      - key: WEBHOOK_SECRET
+        generateValue: true
+
+  # Frontend React Application
+  - type: web
+    name: electricalai-frontend
+    env: static
+    region: oregon
+    plan: starter
+    buildCommand: cd webapp/frontend && npm install && npm run build
+    staticPublishPath: ./webapp/frontend/build
+    envVars:
+      - key: REACT_APP_API_URL
+        value: https://electricalai-backend.onrender.com
+      - key: REACT_APP_N8N_URL
+        value: https://electricalai-n8n.onrender.com
+      - key: REACT_APP_ENVIRONMENT
+        value: production
+    headers:
+      - path: /*
+        name: X-Frame-Options
+        value: DENY
+      - path: /*
+        name: X-Content-Type-Options
+        value: nosniff
+
+  # N8N Workflow Automation System
   - type: web
     name: electricalai-n8n
-    env: node
-    buildCommand: npm install
-    startCommand: npm start
-    plan: starter
-    branch: main
-    rootDir: n8n
+    env: docker
+    dockerfilePath: ./n8n/Dockerfile.render
+    dockerContext: ./n8n
+    region: oregon
+    plan: standard
     healthCheckPath: /healthz
     envVars:
-      # N8N Core Configuration
+      # Database Configuration
+      - key: DB_TYPE
+        value: postgresdb
+      - key: DB_POSTGRESDB_HOST
+        fromDatabase:
+          name: n8n-postgres
+          property: host
+      - key: DB_POSTGRESDB_PORT
+        fromDatabase:
+          name: n8n-postgres
+          property: port
+      - key: DB_POSTGRESDB_DATABASE
+        fromDatabase:
+          name: n8n-postgres
+          property: database
+      - key: DB_POSTGRESDB_USER
+        fromDatabase:
+          name: n8n-postgres
+          property: user
+      - key: DB_POSTGRESDB_PASSWORD
+        fromDatabase:
+          name: n8n-postgres
+          property: password
+      
+      # N8N Configuration
       - key: N8N_HOST
-        value: 0.0.0.0
+        value: electricalai-n8n.onrender.com
       - key: N8N_PORT
-        value: 10000
+        value: 5678
       - key: N8N_PROTOCOL
         value: https
       - key: NODE_ENV
@@ -29,297 +112,172 @@ services:
       
       # Authentication
       - key: N8N_BASIC_AUTH_ACTIVE
-        value: true
+        value: "true"
       - key: N8N_BASIC_AUTH_USER
         value: admin
       - key: N8N_BASIC_AUTH_PASSWORD
         generateValue: true
       
-      # Database Configuration
-      - key: DB_TYPE
-        value: postgresdb
-      - key: DB_POSTGRESDB_HOST
-        fromDatabase:
-          name: electricalai-n8n-db
-          property: host
-      - key: DB_POSTGRESDB_PORT
-        fromDatabase:
-          name: electricalai-n8n-db
-          property: port
-      - key: DB_POSTGRESDB_DATABASE
-        fromDatabase:
-          name: electricalai-n8n-db
-          property: database
-      - key: DB_POSTGRESDB_USER
-        fromDatabase:
-          name: electricalai-n8n-db
-          property: user
-      - key: DB_POSTGRESDB_PASSWORD
-        fromDatabase:
-          name: electricalai-n8n-db
-          property: password
+      # Execution Settings
+      - key: EXECUTIONS_PROCESS
+        value: main
+      - key: EXECUTIONS_DATA_PRUNE
+        value: "true"
+      - key: EXECUTIONS_DATA_MAX_AGE
+        value: "336"
       
       # Queue Configuration
       - key: EXECUTIONS_MODE
         value: queue
       - key: QUEUE_BULL_REDIS_HOST
         fromService:
-          name: electricalai-redis
           type: redis
+          name: n8n-redis
           property: host
       - key: QUEUE_BULL_REDIS_PORT
         fromService:
-          name: electricalai-redis
           type: redis
+          name: n8n-redis
           property: port
       
-      # Security Settings
-      - key: N8N_ENCRYPTION_KEY
-        generateValue: true
-      - key: N8N_SECURE_COOKIE
-        value: true
-      - key: N8N_USER_MANAGEMENT_DISABLED
-        value: false
-      
-      # ElectricalAI Pro Integration
+      # ElectricalAI Integration
       - key: ELECTRICALAI_API_URL
-        value: https://electricalai-api.onrender.com
+        value: https://electricalai-backend.onrender.com
       - key: ELECTRICALAI_API_KEY
         sync: false
       
-      # External Services
+      # External API Keys
       - key: OPENAI_API_KEY
         sync: false
       - key: CLAUDE_API_KEY
         sync: false
       
-      # Email Configuration
-      - key: N8N_EMAIL_MODE
-        value: smtp
-      - key: N8N_SMTP_HOST
-        sync: false
-      - key: N8N_SMTP_PORT
-        value: 587
-      - key: N8N_SMTP_USER
-        sync: false
-      - key: N8N_SMTP_PASS
-        sync: false
-      - key: N8N_SMTP_SENDER
-        value: ElectricalAI Pro <noreply@electricalai.pro>
-      
       # Performance Settings
-      - key: N8N_LOG_LEVEL
-        value: info
       - key: N8N_METRICS
-        value: true
-      - key: N8N_PAYLOAD_SIZE_MAX
-        value: 16
+        value: "true"
+      - key: N8N_METRICS_PREFIX
+        value: n8n_
+      
+      # Security
+      - key: N8N_ENCRYPTION_KEY
+        generateValue: true
 
-  # ================================
-  # N8N WORKER INSTANCES
-  # ================================
+  # N8N Worker Service for Queue Processing
   - type: worker
     name: electricalai-n8n-worker
-    env: node
-    buildCommand: npm install
-    startCommand: npm run start:worker
+    env: docker
+    dockerfilePath: ./n8n/Dockerfile.render
+    dockerContext: ./n8n
+    region: oregon
     plan: starter
-    branch: main
-    rootDir: n8n
-    scaling:
-      minInstances: 1
-      maxInstances: 3
     envVars:
-      # Worker Configuration
-      - key: EXECUTIONS_PROCESS
-        value: worker
-      - key: EXECUTIONS_MODE
-        value: queue
-      
       # Database Configuration (same as main service)
       - key: DB_TYPE
         value: postgresdb
       - key: DB_POSTGRESDB_HOST
         fromDatabase:
-          name: electricalai-n8n-db
+          name: n8n-postgres
           property: host
       - key: DB_POSTGRESDB_PORT
         fromDatabase:
-          name: electricalai-n8n-db
+          name: n8n-postgres
           property: port
       - key: DB_POSTGRESDB_DATABASE
         fromDatabase:
-          name: electricalai-n8n-db
+          name: n8n-postgres
           property: database
       - key: DB_POSTGRESDB_USER
         fromDatabase:
-          name: electricalai-n8n-db
+          name: n8n-postgres
           property: user
       - key: DB_POSTGRESDB_PASSWORD
         fromDatabase:
-          name: electricalai-n8n-db
+          name: n8n-postgres
           property: password
+      
+      # Worker Configuration
+      - key: EXECUTIONS_MODE
+        value: queue
+      - key: EXECUTIONS_PROCESS
+        value: worker
       
       # Queue Configuration
       - key: QUEUE_BULL_REDIS_HOST
         fromService:
-          name: electricalai-redis
           type: redis
+          name: n8n-redis
           property: host
       - key: QUEUE_BULL_REDIS_PORT
         fromService:
-          name: electricalai-redis
           type: redis
+          name: n8n-redis
           property: port
       
-      # Security Settings
-      - key: N8N_ENCRYPTION_KEY
-        sync: false
-      
-      # External Services
-      - key: OPENAI_API_KEY
-        sync: false
-      - key: CLAUDE_API_KEY
-        sync: false
+      # ElectricalAI Integration
+      - key: ELECTRICALAI_API_URL
+        value: https://electricalai-backend.onrender.com
       - key: ELECTRICALAI_API_KEY
         sync: false
-
-  # ================================
-  # ELECTRICALAI PRO API
-  # ================================
-  - type: web
-    name: electricalai-api
-    env: node
-    buildCommand: npm install
-    startCommand: npm start
-    plan: starter
-    branch: main
-    rootDir: webapp/backend
-    healthCheckPath: /api/health
-    envVars:
-      - key: NODE_ENV
-        value: production
-      - key: PORT
-        value: 10000
       
-      # Database Configuration
-      - key: DATABASE_URL
-        fromDatabase:
-          name: electricalai-main-db
-          property: connectionString
-      
-      # N8N Integration
-      - key: N8N_WEBHOOK_URL
-        value: https://electricalai-n8n.onrender.com
-      - key: N8N_WEBHOOK_SECRET
-        generateValue: true
-      
-      # External APIs
+      # External API Keys
       - key: OPENAI_API_KEY
         sync: false
-      - key: CLAUDE_API_KEY
-        sync: false
-      
-      # JWT and Security
-      - key: JWT_SECRET
-        generateValue: true
-      - key: SESSION_SECRET
-        generateValue: true
-      
-      # Email Configuration
-      - key: SMTP_HOST
-        sync: false
-      - key: SMTP_PORT
-        value: 587
-      - key: SMTP_USER
-        sync: false
-      - key: SMTP_PASS
-        sync: false
+    
+    startCommand: n8n worker
 
-  # ================================
-  # ELECTRICALAI PRO FRONTEND
-  # ================================
+  # Monday.com App Hosting
   - type: web
-    name: electricalai-frontend
+    name: electricalai-monday-app
     env: static
-    buildCommand: npm install && npm run build
-    staticPublishPath: ./build
+    region: oregon
     plan: starter
-    branch: main
-    rootDir: webapp/frontend
+    buildCommand: cd monday-app && npm install && npm run build
+    staticPublishPath: ./monday-app/build
     envVars:
-      - key: REACT_APP_API_URL
-        value: https://electricalai-api.onrender.com
-      - key: REACT_APP_N8N_URL
+      - key: REACT_APP_N8N_WEBHOOK_BASE
         value: https://electricalai-n8n.onrender.com
-      - key: NODE_ENV
+      - key: REACT_APP_ELECTRICALAI_API_KEY
+        sync: false
+      - key: REACT_APP_MONDAY_API_TOKEN
+        sync: false
+      - key: REACT_APP_ENVIRONMENT
         value: production
     headers:
       - path: /*
         name: X-Frame-Options
-        value: DENY
+        value: SAMEORIGIN
       - path: /*
         name: X-Content-Type-Options
         value: nosniff
-      - path: /*
-        name: Referrer-Policy
-        value: strict-origin-when-cross-origin
 
-databases:
-  # ================================
-  # N8N DATABASE
-  # ================================
-  - name: electricalai-n8n-db
-    databaseName: n8n_production
-    user: n8n_user
-    plan: starter
-    
-  # ================================
-  # MAIN APPLICATION DATABASE
-  # ================================
-  - name: electricalai-main-db
-    databaseName: electricalai_production
-    user: electricalai_user
-    plan: starter
-
-# ================================
-# REDIS SERVICES
-# ================================
-services:
+  # Redis Cache for Backend and N8N
   - type: redis
-    name: electricalai-redis
+    name: electricalai-cache
+    region: oregon
     plan: starter
     maxmemoryPolicy: allkeys-lru
 
-# ================================
-# CRON JOBS
-# ================================
-  - type: cron
-    name: electricalai-cleanup
-    schedule: "0 2 * * *"  # Daily at 2 AM
-    buildCommand: npm install
-    startCommand: node scripts/cleanup.js
+  # Redis for N8N Queue Management
+  - type: redis
+    name: n8n-redis
+    region: oregon
     plan: starter
-    branch: main
-    rootDir: webapp/backend
-    envVars:
-      - key: DATABASE_URL
-        fromDatabase:
-          name: electricalai-main-db
-          property: connectionString
+    maxmemoryPolicy: allkeys-lru
 
-  - type: cron
-    name: electricalai-metrics
-    schedule: "*/15 * * * *"  # Every 15 minutes
-    buildCommand: npm install
-    startCommand: node scripts/collect-metrics.js
+databases:
+  # Main ElectricalAI Application Database
+  - name: electricalai-db
+    databaseName: electricalai_prod
+    user: electricalai_user
+    region: oregon
     plan: starter
-    branch: main
-    rootDir: webapp/backend
-    envVars:
-      - key: DATABASE_URL
-        fromDatabase:
-          name: electricalai-main-db
-          property: connectionString
-      - key: N8N_WEBHOOK_URL
-        value: https://electricalai-n8n.onrender.com
+    postgresMajorVersion: 14
+
+  # N8N Workflow Database
+  - name: n8n-postgres
+    databaseName: n8n_db
+    user: n8n_user
+    region: oregon
+    plan: starter
+    postgresMajorVersion: 14
+EOF < /dev/null
