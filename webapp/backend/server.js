@@ -228,6 +228,193 @@ async function triggerN8NWorkflow(workflowName, data) {
     }
 }
 
+// Monday.com OAuth Configuration
+const mondayOAuth = {
+    clientId: process.env.MONDAY_CLIENT_ID,
+    clientSecret: process.env.MONDAY_CLIENT_SECRET,
+    redirectUri: process.env.MONDAY_REDIRECT_URI || 'https://electricalai-pro.onrender.com/auth/callback'
+};
+
+// Monday.com OAuth Routes
+app.get('/auth/monday', (req, res) => {
+    const authUrl = `https://auth.monday.com/oauth2/authorize?client_id=${mondayOAuth.clientId}&redirect_uri=${mondayOAuth.redirectUri}`;
+    res.redirect(authUrl);
+});
+
+app.get('/auth/callback', async (req, res) => {
+    const { code } = req.query;
+    
+    if (!code) {
+        return res.status(400).json({ error: 'Authorization code is required' });
+    }
+
+    try {
+        // Exchange code for access token
+        const tokenResponse = await axios.post('https://auth.monday.com/oauth2/token', {
+            client_id: mondayOAuth.clientId,
+            client_secret: mondayOAuth.clientSecret,
+            redirect_uri: mondayOAuth.redirectUri,
+            grant_type: 'authorization_code',
+            code: code
+        });
+
+        const { access_token } = tokenResponse.data;
+
+        // Get user info from Monday.com
+        const userResponse = await axios.post('https://api.monday.com/v2', {
+            query: 'query { me { id name email } }'
+        }, {
+            headers: {
+                'Authorization': `Bearer ${access_token}`,
+                'Content-Type': 'application/json'
+            }
+        });
+
+        const userData = userResponse.data.data.me;
+
+        // Store user and token in database
+        await pool.query(`
+            INSERT INTO monday_users (monday_id, name, email, access_token, created_at, updated_at)
+            VALUES ($1, $2, $3, $4, NOW(), NOW())
+            ON CONFLICT (monday_id) 
+            DO UPDATE SET 
+                name = EXCLUDED.name,
+                email = EXCLUDED.email,
+                access_token = EXCLUDED.access_token,
+                updated_at = NOW()
+        `, [userData.id, userData.name, userData.email, access_token]);
+
+        logger.info(`Monday.com user authenticated: ${userData.email}`);
+
+        // Redirect to success page or return token
+        res.json({
+            success: true,
+            user: userData,
+            message: 'Authentication successful'
+        });
+
+    } catch (error) {
+        logger.error('Monday.com OAuth error:', error);
+        res.status(500).json({
+            error: 'Authentication failed',
+            message: error.message
+        });
+    }
+});
+
+// Monday.com webhook endpoint
+app.post('/monday-webhook', async (req, res) => {
+    try {
+        const webhookData = req.body;
+        logger.info('Monday.com webhook received:', JSON.stringify(webhookData, null, 2));
+
+        // Verify webhook signature if configured
+        const signature = req.headers['authorization'];
+        if (process.env.MONDAY_WEBHOOK_SECRET && signature) {
+            // Implement signature verification here
+            // const expectedSignature = createHmac('sha256', process.env.MONDAY_WEBHOOK_SECRET)
+            //     .update(JSON.stringify(webhookData))
+            //     .digest('hex');
+        }
+
+        // Process different webhook events
+        const { event, pulseId, boardId, userId } = webhookData;
+
+        switch (event?.type) {
+            case 'create_item':
+                await handleCreateItem(webhookData);
+                break;
+            case 'change_column_value':
+                await handleColumnChange(webhookData);
+                break;
+            case 'create_update':
+                await handleCreateUpdate(webhookData);
+                break;
+            case 'item_deleted':
+                await handleItemDeleted(webhookData);
+                break;
+            default:
+                logger.info(`Unhandled webhook event: ${event?.type}`);
+        }
+
+        res.json({ success: true, message: 'Webhook processed successfully' });
+
+    } catch (error) {
+        logger.error('Monday.com webhook processing error:', error);
+        res.status(500).json({
+            error: 'Webhook processing failed',
+            message: error.message
+        });
+    }
+});
+
+// Monday.com webhook event handlers
+async function handleCreateItem(webhookData) {
+    const { pulseId, boardId, pulseName } = webhookData;
+    
+    logger.info(`New item created: ${pulseName} (ID: ${pulseId}) in board ${boardId}`);
+    
+    // Trigger estimation workflow for new projects
+    const workflowResult = await triggerN8NWorkflow('electrical-estimation', {
+        itemId: pulseId,
+        boardId: boardId,
+        itemName: pulseName,
+        source: 'monday-webhook',
+        timestamp: new Date().toISOString()
+    });
+
+    if (workflowResult.success) {
+        logger.info(`Estimation workflow triggered for item ${pulseId}`);
+    } else {
+        logger.error(`Failed to trigger estimation workflow for item ${pulseId}: ${workflowResult.error}`);
+    }
+}
+
+async function handleColumnChange(webhookData) {
+    const { pulseId, columnId, value, previousValue } = webhookData;
+    
+    logger.info(`Column ${columnId} changed for item ${pulseId}: ${previousValue} -> ${value}`);
+
+    // Trigger material cost update if cost-related columns changed
+    if (columnId === 'cost_estimate' || columnId === 'material_list') {
+        await triggerN8NWorkflow('material-cost-update', {
+            itemId: pulseId,
+            columnId: columnId,
+            newValue: value,
+            previousValue: previousValue,
+            source: 'monday-webhook'
+        });
+    }
+}
+
+async function handleCreateUpdate(webhookData) {
+    const { pulseId, updateText, userId } = webhookData;
+    
+    logger.info(`Update created for item ${pulseId} by user ${userId}: ${updateText}`);
+
+    // Trigger progress monitoring workflow
+    await triggerN8NWorkflow('project-progress-update', {
+        itemId: pulseId,
+        updateText: updateText,
+        userId: userId,
+        source: 'monday-webhook'
+    });
+}
+
+async function handleItemDeleted(webhookData) {
+    const { pulseId, boardId } = webhookData;
+    
+    logger.info(`Item ${pulseId} deleted from board ${boardId}`);
+
+    // Clean up related records
+    try {
+        await pool.query('DELETE FROM project_estimations WHERE monday_item_id = $1', [pulseId]);
+        logger.info(`Cleaned up estimation records for deleted item ${pulseId}`);
+    } catch (error) {
+        logger.error(`Failed to clean up records for deleted item ${pulseId}:`, error);
+    }
+}
+
 // Make workflow trigger available to routes
 app.use((req, res, next) => {
     req.triggerWorkflow = triggerN8NWorkflow;
