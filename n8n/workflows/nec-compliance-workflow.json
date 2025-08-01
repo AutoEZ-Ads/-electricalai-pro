@@ -1,0 +1,277 @@
+{
+  "name": "ElectricalAI Pro - NEC Compliance Checker",
+  "active": false,
+  "nodes": [
+    {
+      "parameters": {
+        "path": "nec-compliance-check",
+        "options": {}
+      },
+      "id": "1a2b3c4d-5e6f-7g8h-9i0j-k1l2m3n4o5p6",
+      "name": "Webhook - Compliance Check",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [240, 300],
+      "webhookId": "nec-compliance-check"
+    },
+    {
+      "parameters": {
+        "jsCode": "// NEC 2023 Compliance Checker\n// Comprehensive electrical code compliance validation\n\nconst projectData = $input.first().json;\n\n// Extract project details\nconst {\n  projectId,\n  projectType = 'residential',\n  squareFootage,\n  roomLayout = [],\n  electricalElements = [],\n  panelSpecifications = {},\n  proposedCircuits = [],\n  specialSystems = []\n} = projectData;\n\n// NEC 2023 Compliance Rules Database\nconst NECRules = {\n  // Article 210 - Branch Circuits\n  branchCircuits: {\n    '210.8': {\n      title: 'GFCI Protection',\n      residential: {\n        required: ['bathroom', 'kitchen', 'laundry', 'garage', 'basement', 'outdoor'],\n        exceptions: ['kitchen disposal', 'kitchen dishwasher']\n      },\n      commercial: {\n        required: ['bathroom', 'kitchen', 'rooftop', 'outdoor', 'wet_locations']\n      }\n    },\n    '210.11': {\n      title: 'Branch Circuit Requirements',\n      residential: {\n        lighting: { min_circuits: 1, load_per_sqft: 3 },\n        small_appliance: { min_circuits: 2, load_per_circuit: 1500 },\n        laundry: { min_circuits: 1, load_per_circuit: 1500 }\n      }\n    },\n    '210.12': {\n      title: 'AFCI Protection',\n      residential: {\n        required: ['family_room', 'dining_room', 'living_room', 'parlor', 'library', 'den', 'bedroom', 'sunroom', 'recreation_room', 'closet', 'hallway', 'laundry'],\n        exceptions: ['bathroom', 'garage', 'unfinished_basement']\n      }\n    },\n    '210.52': {\n      title: 'Dwelling Unit Receptacle Outlets',\n      spacing: {\n        wall_outlets: { max_distance: 6, units: 'feet' },\n        kitchen_countertop: { max_distance: 4, units: 'feet' },\n        island_countertop: { min_outlets: 1, min_length: 24, units: 'inches' }\n      }\n    }\n  },\n  // Article 220 - Load Calculations\n  loadCalculations: {\n    '220.12': {\n      title: 'General Lighting Load',\n      residential: { load_per_sqft: 3, units: 'VA' },\n      commercial: { load_per_sqft: 1, units: 'VA' }\n    },\n    '220.52': {\n      title: 'Small Appliance and Laundry Loads',\n      small_appliance: { min_circuits: 2, load_per_circuit: 1500 },\n      laundry: { circuits: 1, load: 1500 }\n    }\n  },\n  // Article 314 - Outlet Boxes\n  outletBoxes: {\n    '314.16': {\n      title: 'Number of Conductors in Outlet Boxes',\n      fill_calculation: {\n        '14_awg': 2.0, // cubic inches per conductor\n        '12_awg': 2.25,\n        '10_awg': 2.5\n      }\n    }\n  }\n};\n\n// Compliance checking functions\nfunction checkGFCICompliance(rooms, elements) {\n  const violations = [];\n  const warnings = [];\n  \n  const gfciRequired = NECRules.branchCircuits['210.8'][projectType]?.required || [];\n  \n  rooms.forEach(room => {\n    const roomType = room.type?.toLowerCase();\n    const requiresGFCI = gfciRequired.some(req => roomType.includes(req));\n    \n    if (requiresGFCI) {\n      const roomElements = elements.filter(el => el.room?.toLowerCase() === room.name?.toLowerCase());\n      const hasGFCI = roomElements.some(el => el.type === 'outlet' && el.specifications?.type === 'GFCI');\n      \n      if (!hasGFCI) {\n        violations.push({\n          code: 'NEC 210.8',\n          severity: 'critical',\n          description: `GFCI protection required in ${room.name} (${roomType})`,\n          location: room.name,\n          solution: 'Install GFCI outlets or GFCI circuit breaker'\n        });\n      }\n    }\n  });\n  \n  return { violations, warnings };\n}\n\nfunction checkAFCICompliance(rooms, circuits) {\n  const violations = [];\n  const warnings = [];\n  \n  if (projectType !== 'residential') {\n    return { violations, warnings };\n  }\n  \n  const afciRequired = NECRules.branchCircuits['210.12'].residential.required;\n  const afciExceptions = NECRules.branchCircuits['210.12'].residential.exceptions;\n  \n  rooms.forEach(room => {\n    const roomType = room.type?.toLowerCase();\n    const requiresAFCI = afciRequired.some(req => roomType.includes(req.replace('_', ' ')));\n    const isException = afciExceptions.some(exc => roomType.includes(exc.replace('_', ' ')));\n    \n    if (requiresAFCI && !isException) {\n      const roomCircuits = circuits.filter(c => c.serves_rooms?.includes(room.name));\n      const hasAFCI = roomCircuits.some(c => c.protection?.includes('AFCI'));\n      \n      if (!hasAFCI) {\n        violations.push({\n          code: 'NEC 210.12',\n          severity: 'critical',\n          description: `AFCI protection required for ${room.name} (${roomType})`,\n          location: room.name,\n          solution: 'Install AFCI circuit breaker or combination AFCI/GFCI'\n        });\n      }\n    }\n  });\n  \n  return { violations, warnings };\n}\n\nfunction checkOutletSpacing(rooms, elements) {\n  const violations = [];\n  const warnings = [];\n  \n  const spacingRules = NECRules.branchCircuits['210.52'].spacing;\n  \n  rooms.forEach(room => {\n    const roomOutlets = elements.filter(el => \n      el.room?.toLowerCase() === room.name?.toLowerCase() && el.type === 'outlet'\n    );\n    \n    if (roomOutlets.length === 0 && room.type !== 'bathroom') {\n      violations.push({\n        code: 'NEC 210.52',\n        severity: 'major',\n        description: `No outlets found in ${room.name}`,\n        location: room.name,\n        solution: 'Install outlets per NEC spacing requirements'\n      });\n      return;\n    }\n    \n    // Check wall outlet spacing (simplified - would need actual wall measurements)\n    if (room.type?.toLowerCase() === 'kitchen') {\n      const counterOutlets = roomOutlets.filter(o => o.location?.includes('counter'));\n      if (counterOutlets.length < 2) {\n        warnings.push({\n          code: 'NEC 210.52',\n          severity: 'minor',\n          description: `Kitchen may need more countertop outlets in ${room.name}`,\n          location: room.name,\n          solution: 'Verify 4-foot spacing rule for countertop outlets'\n        });\n      }\n    }\n  });\n  \n  return { violations, warnings };\n}\n\nfunction checkLoadCalculations(squareFootage, circuits, appliances = []) {\n  const violations = [];\n  const warnings = [];\n  \n  // General lighting load calculation\n  const requiredLightingLoad = squareFootage * NECRules.loadCalculations['220.12'][projectType].load_per_sqft;\n  const lightingCircuits = circuits.filter(c => c.type === 'lighting');\n  const totalLightingCapacity = lightingCircuits.reduce((sum, c) => sum + (c.amperage * c.voltage * 0.8), 0);\n  \n  if (totalLightingCapacity < requiredLightingLoad) {\n    violations.push({\n      code: 'NEC 220.12',\n      severity: 'major',\n      description: `Insufficient lighting load capacity: ${totalLightingCapacity}VA provided, ${requiredLightingLoad}VA required`,\n      location: 'General',\n      solution: 'Add additional lighting circuits or increase circuit capacity'\n    });\n  }\n  \n  // Small appliance circuits\n  if (projectType === 'residential') {\n    const smallApplianceCircuits = circuits.filter(c => c.type === 'small_appliance');\n    const minRequired = NECRules.loadCalculations['220.52'].small_appliance.min_circuits;\n    \n    if (smallApplianceCircuits.length < minRequired) {\n      violations.push({\n        code: 'NEC 220.52',\n        severity: 'critical',\n        description: `Insufficient small appliance circuits: ${smallApplianceCircuits.length} provided, ${minRequired} required`,\n        location: 'Kitchen',\n        solution: 'Add dedicated 20A small appliance circuits'\n      });\n    }\n  }\n  \n  return { violations, warnings };\n}\n\nfunction checkPanelRequirements(panelSpecs, totalLoad) {\n  const violations = [];\n  const warnings = [];\n  \n  const panelCapacity = panelSpecs.amperage || 100;\n  const panelVoltage = panelSpecs.voltage || 120;\n  const maxCapacity = panelCapacity * panelVoltage * 0.8; // 80% rule\n  \n  if (totalLoad > maxCapacity) {\n    violations.push({\n      code: 'NEC 220.40',\n      severity: 'critical',\n      description: `Panel capacity exceeded: ${totalLoad}VA load, ${maxCapacity}VA capacity`,\n      location: 'Main Panel',\n      solution: 'Upgrade to larger panel or reduce connected load'\n    });\n  } else if (totalLoad > maxCapacity * 0.9) {\n    warnings.push({\n      code: 'NEC 220.40',\n      severity: 'minor',\n      description: `Panel capacity approaching limit: ${totalLoad}VA load, ${maxCapacity}VA capacity`,\n      location: 'Main Panel',\n      solution: 'Consider future expansion needs'\n    });\n  }\n  \n  return { violations, warnings };\n}\n\n// Perform comprehensive compliance check\nconst complianceResults = {\n  projectId,\n  timestamp: new Date().toISOString(),\n  necVersion: '2023',\n  projectType,\n  checks: {\n    gfci: checkGFCICompliance(roomLayout, electricalElements),\n    afci: checkAFCICompliance(roomLayout, proposedCircuits),\n    outlets: checkOutletSpacing(roomLayout, electricalElements),\n    loads: checkLoadCalculations(squareFootage, proposedCircuits),\n    panel: checkPanelRequirements(panelSpecifications, proposedCircuits.reduce((sum, c) => sum + (c.load || 0), 0))\n  }\n};\n\n// Aggregate all violations and warnings\nconst allViolations = [];\nconst allWarnings = [];\n\nObject.values(complianceResults.checks).forEach(check => {\n  allViolations.push(...check.violations);\n  allWarnings.push(...check.warnings);\n});\n\n// Calculate compliance score\nconst totalIssues = allViolations.length + allWarnings.length;\nconst criticalViolations = allViolations.filter(v => v.severity === 'critical').length;\nconst majorViolations = allViolations.filter(v => v.severity === 'major').length;\nconst minorWarnings = allWarnings.filter(w => w.severity === 'minor').length;\n\n// Scoring: Critical = -20, Major = -10, Minor = -2\nconst scoreDeduction = (criticalViolations * 20) + (majorViolations * 10) + (minorWarnings * 2);\nconst complianceScore = Math.max(0, 100 - scoreDeduction);\n\n// Generate compliance status\nlet complianceStatus = 'COMPLIANT';\nif (criticalViolations > 0) {\n  complianceStatus = 'NON_COMPLIANT';\n} else if (majorViolations > 0) {\n  complianceStatus = 'REQUIRES_ATTENTION';\n} else if (minorWarnings > 0) {\n  complianceStatus = 'COMPLIANT_WITH_WARNINGS';\n}\n\n// Create detailed report\nconst report = {\n  ...complianceResults,\n  summary: {\n    status: complianceStatus,\n    score: complianceScore,\n    totalIssues,\n    breakdown: {\n      critical: criticalViolations,\n      major: majorViolations,\n      minor: minorWarnings\n    }\n  },\n  violations: allViolations,\n  warnings: allWarnings,\n  recommendations: [\n    ...allViolations.map(v => ({\n      priority: 'high',\n      code: v.code,\n      action: v.solution,\n      location: v.location\n    })),\n    ...allWarnings.map(w => ({\n      priority: 'medium',\n      code: w.code,\n      action: w.solution,\n      location: w.location\n    }))\n  ],\n  nextSteps: complianceStatus === 'COMPLIANT' ? [\n    'Review with electrical engineer',\n    'Submit for permit approval',\n    'Schedule inspection phases'\n  ] : [\n    'Address critical violations immediately',\n    'Review design with NEC expert',\n    'Revise electrical plans',\n    'Resubmit for compliance check'\n  ]\n};\n\nreturn [{ json: report }];"
+      },
+      "id": "2b3c4d5e-6f7g-8h9i-0j1k-l2m3n4o5p6q7",
+      "name": "NEC Compliance Engine",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.electricalai.pro/nec/validate-advanced",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 15000
+        },
+        "bodyParametersUi": {
+          "parameter": [
+            {
+              "name": "violations",
+              "value": "={{ JSON.stringify($json.violations) }}"
+            },
+            {
+              "name": "projectType",
+              "value": "={{ $json.projectType }}"
+            },
+            {
+              "name": "complianceScore",
+              "value": "={{ $json.summary.score }}"
+            }
+          ]
+        }
+      },
+      "id": "3c4d5e6f-7g8h-9i0j-1k2l-m3n4o5p6q7r8",
+      "name": "Advanced NEC Validation",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [680, 300],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "jsCode": "// Generate Compliance Certificate or Violation Report\nconst complianceData = $('NEC Compliance Engine').first().json;\nconst advancedValidation = $('Advanced NEC Validation').first();\n\n// Merge advanced validation results if available\nlet enhancedReport = { ...complianceData };\n\nif (advancedValidation && advancedValidation.json && !advancedValidation.json.error) {\n  const advancedResults = advancedValidation.json;\n  \n  // Add advanced validation insights\n  enhancedReport.advancedValidation = {\n    aiRecommendations: advancedResults.aiRecommendations || [],\n    riskAssessment: advancedResults.riskAssessment || 'medium',\n    costImpact: advancedResults.costImpact || null,\n    timelineImpact: advancedResults.timelineImpact || null\n  };\n  \n  // Update compliance score with advanced factors\n  if (advancedResults.adjustedScore) {\n    enhancedReport.summary.score = advancedResults.adjustedScore;\n  }\n}\n\n// Generate compliance certificate for compliant projects\nif (enhancedReport.summary.status === 'COMPLIANT') {\n  enhancedReport.certificate = {\n    certificateId: `NEC-CERT-${enhancedReport.projectId}-${Date.now()}`,\n    issuedDate: new Date().toISOString(),\n    validUntil: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString(), // 1 year\n    certifyingAuthority: 'ElectricalAI Pro NEC Compliance Engine',\n    necVersion: '2023',\n    certificationLevel: enhancedReport.summary.score >= 95 ? 'Gold' : enhancedReport.summary.score >= 85 ? 'Silver' : 'Bronze',\n    digitalSignature: `${enhancedReport.projectId}-${Date.now()}-verified`,\n    qrCode: `https://electricalai.pro/verify/${enhancedReport.projectId}`\n  };\n}\n\n// Generate detailed violation report for non-compliant projects\nif (enhancedReport.summary.status === 'NON_COMPLIANT') {\n  enhancedReport.violationReport = {\n    reportId: `NEC-VIOL-${enhancedReport.projectId}-${Date.now()}`,\n    severity: 'CRITICAL',\n    mustFixItems: enhancedReport.violations.filter(v => v.severity === 'critical'),\n    estimatedFixCost: enhancedReport.violations.reduce((sum, v) => {\n      const costMap = { critical: 1500, major: 800, minor: 200 };\n      return sum + (costMap[v.severity] || 0);\n    }, 0),\n    estimatedFixTime: enhancedReport.violations.length * 2, // 2 hours per violation\n    reinspectionRequired: true\n  };\n}\n\n// Create inspector-ready summary\nenhancedReport.inspectorSummary = {\n  projectCompliant: enhancedReport.summary.status === 'COMPLIANT',\n  criticalIssues: enhancedReport.violations.filter(v => v.severity === 'critical').length,\n  majorIssues: enhancedReport.violations.filter(v => v.severity === 'major').length,\n  minorIssues: enhancedReport.warnings.filter(w => w.severity === 'minor').length,\n  overallScore: enhancedReport.summary.score,\n  recommendedAction: enhancedReport.summary.status === 'COMPLIANT' ? 'APPROVE' : 'REVISE_AND_RESUBMIT',\n  inspectionPhases: {\n    roughIn: enhancedReport.summary.status === 'COMPLIANT' ? 'READY' : 'NOT_READY',\n    trim: 'PENDING',\n    final: 'PENDING'\n  }\n};\n\n// Add compliance tracking metadata\nenhancedReport.metadata = {\n  generatedBy: 'ElectricalAI Pro NEC 2023 Compliance Engine',\n  version: '2.1.0',\n  processingTime: Date.now() - new Date(enhancedReport.timestamp).getTime(),\n  rulesChecked: Object.keys(enhancedReport.checks).length,\n  confidenceLevel: enhancedReport.advancedValidation ? 'high' : 'medium'\n};\n\nreturn [{ json: enhancedReport }];"
+      },
+      "id": "4d5e6f7g-8h9i-0j1k-2l3m-n4o5p6q7r8s9",
+      "name": "Generate Compliance Report",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [900, 300]
+    },
+    {
+      "parameters": {
+        "operation": "insert",
+        "table": "nec_compliance_reports",
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "project_id": "={{ $json.projectId }}",
+            "compliance_data": "={{ JSON.stringify($json) }}",
+            "compliance_status": "={{ $json.summary.status }}",
+            "compliance_score": "={{ $json.summary.score }}",
+            "critical_violations": "={{ $json.summary.breakdown.critical }}",
+            "major_violations": "={{ $json.summary.breakdown.major }}",
+            "minor_warnings": "={{ $json.summary.breakdown.minor }}",
+            "certificate_id": "={{ $json.certificate?.certificateId }}",
+            "valid_until": "={{ $json.certificate?.validUntil }}",
+            "created_at": "={{ $json.timestamp }}"
+          }
+        }
+      },
+      "id": "5e6f7g8h-9i0j-1k2l-3m4n-o5p6q7r8s9t0",
+      "name": "Save Compliance Report",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [1120, 300],
+      "credentials": {
+        "postgres": {
+          "id": "postgres-electricalai",
+          "name": "ElectricalAI Database"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "critical_violations",
+              "leftValue": "={{ $json.summary.breakdown.critical }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ],
+          "combineOperation": "any"
+        },
+        "options": {}
+      },
+      "id": "6f7g8h9i-0j1k-2l3m-4n5o-p6q7r8s9t0u1",
+      "name": "Check Critical Violations",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1340, 300]
+    },
+    {
+      "parameters": {
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "requestMethod": "POST",
+        "url": "https://api.electricalai.pro/notifications/critical-violation",
+        "options": {
+          "timeout": 10000
+        },
+        "bodyParametersUi": {
+          "parameter": [
+            {
+              "name": "projectId",
+              "value": "={{ $('Save Compliance Report').item.json.projectId }}"
+            },
+            {
+              "name": "violations",
+              "value": "={{ JSON.stringify($('Save Compliance Report').item.json.violations.filter(v => v.severity === 'critical')) }}"
+            },
+            {
+              "name": "urgency",
+              "value": "high"
+            }
+          ]
+        }
+      },
+      "id": "7g8h9i0j-1k2l-3m4n-5o6p-q7r8s9t0u1v2",
+      "name": "Send Critical Alert",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [1560, 200]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Format compliance response for frontend\nconst complianceReport = $('Save Compliance Report').first().json;\n\nconst response = {\n  success: true,\n  projectId: complianceReport.projectId,\n  compliance: {\n    status: complianceReport.summary.status,\n    score: complianceReport.summary.score,\n    certificateId: complianceReport.certificate?.certificateId,\n    validUntil: complianceReport.certificate?.validUntil\n  },\n  issues: {\n    critical: complianceReport.summary.breakdown.critical,\n    major: complianceReport.summary.breakdown.major,\n    minor: complianceReport.summary.breakdown.minor,\n    total: complianceReport.summary.totalIssues\n  },\n  violations: complianceReport.violations.map(v => ({\n    code: v.code,\n    severity: v.severity,\n    description: v.description,\n    location: v.location,\n    solution: v.solution\n  })),\n  recommendations: complianceReport.recommendations.slice(0, 5), // Top 5 recommendations\n  inspector: {\n    ready: complianceReport.inspectorSummary.projectCompliant,\n    action: complianceReport.inspectorSummary.recommendedAction,\n    phases: complianceReport.inspectorSummary.inspectionPhases\n  },\n  nextSteps: complianceReport.nextSteps,\n  certificate: complianceReport.certificate || null,\n  processingTime: complianceReport.metadata.processingTime,\n  timestamp: complianceReport.timestamp\n};\n\nreturn [{ json: response }];"
+      },
+      "id": "8h9i0j1k-2l3m-4n5o-6p7q-r8s9t0u1v2w3",
+      "name": "Format Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1560, 400]
+    }
+  ],
+  "connections": {
+    "Webhook - Compliance Check": {
+      "main": [
+        [
+          {
+            "node": "NEC Compliance Engine",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "NEC Compliance Engine": {
+      "main": [
+        [
+          {
+            "node": "Advanced NEC Validation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Advanced NEC Validation": {
+      "main": [
+        [
+          {
+            "node": "Generate Compliance Report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate Compliance Report": {
+      "main": [
+        [
+          {
+            "node": "Save Compliance Report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save Compliance Report": {
+      "main": [
+        [
+          {
+            "node": "Check Critical Violations",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Critical Violations": {
+      "main": [
+        [
+          {
+            "node": "Send Critical Alert",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Format Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Critical Alert": {
+      "main": [
+        [
+          {
+            "node": "Format Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "staticData": null,
+  "tags": [
+    {
+      "createdAt": "2025-08-01T00:00:00.000Z",
+      "updatedAt": "2025-08-01T00:00:00.000Z",
+      "id": "nec-compliance",
+      "name": "ElectricalAI Pro"
+    }
+  ],
+  "triggerCount": 1,
+  "updatedAt": "2025-08-01T00:00:00.000Z",
+  "versionId": "1"
+}

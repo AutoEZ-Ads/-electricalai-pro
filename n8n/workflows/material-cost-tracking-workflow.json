@@ -1,0 +1,290 @@
+{
+  "name": "ElectricalAI Pro - Material Cost Tracking",
+  "active": false,
+  "nodes": [
+    {
+      "parameters": {
+        "path": "material-cost-update",
+        "options": {}
+      },
+      "id": "1a2b3c4d-5e6f-7g8h-9i0j-k1l2m3n4o5p6",
+      "name": "Webhook - Cost Update",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [240, 300],
+      "webhookId": "material-cost-update"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Material Cost Tracking and Price Intelligence\n// Real-time material cost updates and trend analysis\n\nconst updateData = $input.first().json;\n\n// Extract update information\nconst {\n  updateType = 'manual', // manual, supplier_api, market_data, user_report\n  materials = [],\n  supplier = null,\n  location = 'general',\n  projectId = null,\n  timestamp = new Date().toISOString()\n} = updateData;\n\n// Material Categories and Specifications\nconst materialCategories = {\n  wire: {\n    '12_awg_thhn': { basePrice: 2.50, unit: 'foot', category: 'wire', copperId: 'HG' },\n    '14_awg_thhn': { basePrice: 1.80, unit: 'foot', category: 'wire', copperId: 'HG' },\n    '10_awg_thhn': { basePrice: 3.20, unit: 'foot', category: 'wire', copperId: 'HG' },\n    '8_awg_thhn': { basePrice: 4.80, unit: 'foot', category: 'wire', copperId: 'HG' },\n    '6_awg_thhn': { basePrice: 7.20, unit: 'foot', category: 'wire', copperId: 'HG' },\n    'romex_12_2': { basePrice: 0.95, unit: 'foot', category: 'wire', copperId: 'HG' },\n    'romex_14_2': { basePrice: 0.75, unit: 'foot', category: 'wire', copperId: 'HG' }\n  },\n  conduit: {\n    'emt_1_2': { basePrice: 8.50, unit: '10ft_stick', category: 'conduit' },\n    'emt_3_4': { basePrice: 12.00, unit: '10ft_stick', category: 'conduit' },\n    'emt_1': { basePrice: 18.50, unit: '10ft_stick', category: 'conduit' },\n    'pvc_1_2': { basePrice: 3.20, unit: '10ft_stick', category: 'conduit' },\n    'pvc_3_4': { basePrice: 4.80, unit: '10ft_stick', category: 'conduit' },\n    'liquid_tight': { basePrice: 2.40, unit: 'foot', category: 'conduit' }\n  },\n  devices: {\n    'outlet_15a_std': { basePrice: 2.50, unit: 'each', category: 'devices' },\n    'outlet_20a_std': { basePrice: 4.20, unit: 'each', category: 'devices' },\n    'outlet_15a_gfci': { basePrice: 18.50, unit: 'each', category: 'devices' },\n    'outlet_20a_gfci': { basePrice: 24.00, unit: 'each', category: 'devices' },\n    'switch_single': { basePrice: 1.85, unit: 'each', category: 'devices' },\n    'switch_3way': { basePrice: 3.20, unit: 'each', category: 'devices' },\n    'switch_dimmer': { basePrice: 28.00, unit: 'each', category: 'devices' },\n    'usb_outlet': { basePrice: 35.00, unit: 'each', category: 'devices' }\n  },\n  panels: {\n    'panel_100a_20circuit': { basePrice: 125.00, unit: 'each', category: 'panels' },\n    'panel_200a_40circuit': { basePrice: 285.00, unit: 'each', category: 'panels' },\n    'subpanel_100a': { basePrice: 95.00, unit: 'each', category: 'panels' },\n    'breaker_15a_1pole': { basePrice: 8.50, unit: 'each', category: 'panels' },\n    'breaker_20a_1pole': { basePrice: 9.20, unit: 'each', category: 'panels' },\n    'breaker_30a_2pole': { basePrice: 28.00, unit: 'each', category: 'panels' },\n    'gfci_breaker_15a': { basePrice: 45.00, unit: 'each', category: 'panels' },\n    'afci_breaker_15a': { basePrice: 65.00, unit: 'each', category: 'panels' }\n  },\n  fixtures: {\n    'led_recessed_6in': { basePrice: 35.00, unit: 'each', category: 'fixtures' },\n    'led_ceiling_flush': { basePrice: 45.00, unit: 'each', category: 'fixtures' },\n    'pendant_kitchen': { basePrice: 125.00, unit: 'each', category: 'fixtures' },\n    'chandelier_dining': { basePrice: 350.00, unit: 'each', category: 'fixtures' },\n    'outdoor_wall_sconce': { basePrice: 85.00, unit: 'each', category: 'fixtures' },\n    'can_light_housing': { basePrice: 18.50, unit: 'each', category: 'fixtures' }\n  },\n  specialty: {\n    'smart_switch': { basePrice: 65.00, unit: 'each', category: 'specialty' },\n    'motion_sensor': { basePrice: 28.00, unit: 'each', category: 'specialty' },\n    'ceiling_fan': { basePrice: 185.00, unit: 'each', category: 'specialty' },\n    'exhaust_fan': { basePrice: 95.00, unit: 'each', category: 'specialty' },\n    'doorbell_transformer': { basePrice: 25.00, unit: 'each', category: 'specialty' },\n    'surge_protector': { basePrice: 145.00, unit: 'each', category: 'specialty' }\n  }\n};\n\n// Location-based multipliers\nconst locationMultipliers = {\n  urban: 1.25,\n  suburban: 1.0,\n  rural: 0.85,\n  high_cost_area: 1.45,\n  general: 1.0\n};\n\n// Get current copper price (simplified - would integrate with COMEX API)\nfunction getCopperPriceMultiplier() {\n  // Base price assumes $3.50/lb copper\n  // This would be updated from real market data\n  const currentCopperPrice = 4.25; // Example current price\n  const baseCopperPrice = 3.50;\n  return currentCopperPrice / baseCopperPrice;\n}\n\n// Process material updates\nfunction processMaterialUpdates(materials, location) {\n  const copperMultiplier = getCopperPriceMultiplier();\n  const locationMultiplier = locationMultipliers[location] || 1.0;\n  const processedMaterials = [];\n  \n  materials.forEach(material => {\n    const {\n      materialId,\n      supplierPrice = null,\n      quantity = 1,\n      supplier = 'unknown',\n      reportedBy = 'system'\n    } = material;\n    \n    // Find material in catalog\n    let catalogMaterial = null;\n    let categoryName = null;\n    \n    for (const [category, items] of Object.entries(materialCategories)) {\n      if (items[materialId]) {\n        catalogMaterial = items[materialId];\n        categoryName = category;\n        break;\n      }\n    }\n    \n    if (!catalogMaterial) {\n      // Handle unknown materials\n      processedMaterials.push({\n        materialId,\n        status: 'unknown_material',\n        error: `Material ${materialId} not found in catalog`\n      });\n      return;\n    }\n    \n    // Calculate adjusted price\n    let adjustedPrice = catalogMaterial.basePrice;\n    \n    // Apply copper price multiplier for wire\n    if (catalogMaterial.copperId) {\n      adjustedPrice *= copperMultiplier;\n    }\n    \n    // Apply location multiplier\n    adjustedPrice *= locationMultiplier;\n    \n    // Calculate price variance if supplier price provided\n    let priceVariance = null;\n    let variancePercentage = null;\n    \n    if (supplierPrice !== null) {\n      priceVariance = supplierPrice - adjustedPrice;\n      variancePercentage = ((supplierPrice - adjustedPrice) / adjustedPrice) * 100;\n    }\n    \n    processedMaterials.push({\n      materialId,\n      category: categoryName,\n      catalogPrice: Math.round(catalogMaterial.basePrice * 100) / 100,\n      adjustedPrice: Math.round(adjustedPrice * 100) / 100,\n      supplierPrice,\n      priceVariance: priceVariance ? Math.round(priceVariance * 100) / 100 : null,\n      variancePercentage: variancePercentage ? Math.round(variancePercentage * 10) / 10 : null,\n      unit: catalogMaterial.unit,\n      quantity,\n      totalCost: Math.round(adjustedPrice * quantity * 100) / 100,\n      supplier,\n      location,\n      reportedBy,\n      multipliers: {\n        copper: catalogMaterial.copperId ? Math.round(copperMultiplier * 100) / 100 : 1.0,\n        location: locationMultiplier\n      },\n      timestamp: new Date().toISOString()\n    });\n  });\n  \n  return processedMaterials;\n}\n\n// Analyze price trends\nfunction analyzePriceTrends(processedMaterials) {\n  const trends = {\n    categories: {},\n    alerts: [],\n    overall: {\n      avgVariance: 0,\n      volatileMaterials: [],\n      costIncreases: 0,\n      costDecreases: 0\n    }\n  };\n  \n  const variances = processedMaterials\n    .filter(m => m.variancePercentage !== null)\n    .map(m => m.variancePercentage);\n  \n  if (variances.length > 0) {\n    trends.overall.avgVariance = Math.round((variances.reduce((sum, v) => sum + v, 0) / variances.length) * 10) / 10;\n    trends.overall.costIncreases = variances.filter(v => v > 0).length;\n    trends.overall.costDecreases = variances.filter(v => v < 0).length;\n  }\n  \n  // Analyze by category\n  processedMaterials.forEach(material => {\n    if (!trends.categories[material.category]) {\n      trends.categories[material.category] = {\n        materials: [],\n        avgVariance: 0,\n        priceAlert: false\n      };\n    }\n    \n    trends.categories[material.category].materials.push(material);\n    \n    // Check for significant price changes\n    if (material.variancePercentage !== null) {\n      if (Math.abs(material.variancePercentage) > 15) {\n        trends.overall.volatileMaterials.push(material.materialId);\n        trends.categories[material.category].priceAlert = true;\n        \n        trends.alerts.push({\n          type: 'price_variance',\n          severity: Math.abs(material.variancePercentage) > 25 ? 'high' : 'medium',\n          material: material.materialId,\n          variance: material.variancePercentage,\n          message: `${material.materialId} price ${material.variancePercentage > 0 ? 'increased' : 'decreased'} by ${Math.abs(material.variancePercentage).toFixed(1)}%`\n        });\n      }\n    }\n  });\n  \n  // Calculate category averages\n  Object.keys(trends.categories).forEach(category => {\n    const categoryMaterials = trends.categories[category].materials;\n    const categoryVariances = categoryMaterials\n      .filter(m => m.variancePercentage !== null)\n      .map(m => m.variancePercentage);\n    \n    if (categoryVariances.length > 0) {\n      trends.categories[category].avgVariance = Math.round(\n        (categoryVariances.reduce((sum, v) => sum + v, 0) / categoryVariances.length) * 10\n      ) / 10;\n    }\n  });\n  \n  return trends;\n}\n\n// Generate cost impact analysis\nfunction generateCostImpact(processedMaterials, projectId) {\n  const impact = {\n    projectId,\n    totalMaterials: processedMaterials.length,\n    totalCost: processedMaterials.reduce((sum, m) => sum + m.totalCost, 0),\n    costByCategory: {},\n    recommendations: [],\n    riskLevel: 'low'\n  };\n  \n  // Calculate cost by category\n  processedMaterials.forEach(material => {\n    if (!impact.costByCategory[material.category]) {\n      impact.costByCategory[material.category] = {\n        totalCost: 0,\n        materialCount: 0,\n        avgPrice: 0\n      };\n    }\n    \n    impact.costByCategory[material.category].totalCost += material.totalCost;\n    impact.costByCategory[material.category].materialCount += 1;\n  });\n  \n  // Calculate averages and risk level\n  let totalVariance = 0;\n  let varianceCount = 0;\n  \n  Object.keys(impact.costByCategory).forEach(category => {\n    const categoryData = impact.costByCategory[category];\n    categoryData.avgPrice = Math.round((categoryData.totalCost / categoryData.materialCount) * 100) / 100;\n    \n    const categoryMaterials = processedMaterials.filter(m => m.category === category);\n    const categoryVariances = categoryMaterials.filter(m => m.variancePercentage !== null);\n    \n    if (categoryVariances.length > 0) {\n      const avgVariance = categoryVariances.reduce((sum, m) => sum + Math.abs(m.variancePercentage), 0) / categoryVariances.length;\n      totalVariance += avgVariance;\n      varianceCount += 1;\n    }\n  });\n  \n  // Determine risk level\n  if (varianceCount > 0) {\n    const overallVariance = totalVariance / varianceCount;\n    if (overallVariance > 20) {\n      impact.riskLevel = 'high';\n    } else if (overallVariance > 10) {\n      impact.riskLevel = 'medium';\n    }\n  }\n  \n  // Generate recommendations\n  if (impact.riskLevel === 'high') {\n    impact.recommendations.push('Consider locking in material prices with suppliers');\n    impact.recommendations.push('Review alternative materials with stable pricing');\n    impact.recommendations.push('Increase project contingency by 10-15%');\n  } else if (impact.riskLevel === 'medium') {\n    impact.recommendations.push('Monitor material prices closely');\n    impact.recommendations.push('Consider bulk purchasing for volatile materials');\n  }\n  \n  return impact;\n}\n\n// Process the material cost update\nconst processedMaterials = processMaterialUpdates(materials, location);\nconst priceTrends = analyzePriceTrends(processedMaterials);\nconst costImpact = generateCostImpact(processedMaterials, projectId);\n\n// Create comprehensive material cost report\nconst report = {\n  updateId: `MCU-${Date.now()}`,\n  timestamp,\n  updateType,\n  projectId,\n  location,\n  supplier,\n  materials: processedMaterials,\n  trends: priceTrends,\n  impact: costImpact,\n  marketConditions: {\n    copperPrice: getCopperPriceMultiplier(),\n    locationMultiplier: locationMultipliers[location] || 1.0,\n    marketTrend: priceTrends.overall.avgVariance > 5 ? 'increasing' : priceTrends.overall.avgVariance < -5 ? 'decreasing' : 'stable'\n  },\n  summary: {\n    materialsProcessed: processedMaterials.length,\n    totalEstimatedCost: Math.round(costImpact.totalCost * 100) / 100,\n    priceAlertsCount: priceTrends.alerts.length,\n    riskLevel: costImpact.riskLevel,\n    recommendationsCount: costImpact.recommendations.length\n  },\n  metadata: {\n    generatedBy: 'ElectricalAI Pro Material Cost Tracker',\n    version: '1.2.0',\n    processingLocation: location,\n    dataSource: updateType\n  }\n};\n\nreturn [{ json: report }];"
+      },
+      "id": "2b3c4d5e-6f7g-8h9i-0j1k-l2m3n4o5p6q7",
+      "name": "Process Material Costs",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "https://api.metals-api.com/v1/latest?access_key={{ $env.METALS_API_KEY }}&base=USD&symbols=COPPER",
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "id": "3c4d5e6f-7g8h-9i0j-1k2l-m3n4o5p6q7r8",
+      "name": "Get Copper Prices",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [460, 500],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "jsCode": "// Update material costs with real-time copper pricing\nconst costReport = $('Process Material Costs').first().json;\nconst copperData = $('Get Copper Prices').first();\n\n// Update copper pricing if API call was successful\nif (copperData && copperData.json && copperData.json.rates && copperData.json.rates.COPPER) {\n  const currentCopperPrice = copperData.json.rates.COPPER;\n  const baseCopperPrice = 3.50; // Base price in our system\n  const realCopperMultiplier = currentCopperPrice / baseCopperPrice;\n  \n  // Update all copper-containing materials\n  costReport.materials.forEach(material => {\n    if (material.multipliers && material.multipliers.copper > 1.0) {\n      // Recalculate with real copper price\n      const basePrice = material.catalogPrice;\n      const locationMultiplier = material.multipliers.location;\n      \n      material.adjustedPrice = Math.round(basePrice * realCopperMultiplier * locationMultiplier * 100) / 100;\n      material.totalCost = Math.round(material.adjustedPrice * material.quantity * 100) / 100;\n      material.multipliers.copper = Math.round(realCopperMultiplier * 100) / 100;\n      \n      // Recalculate variance if supplier price exists\n      if (material.supplierPrice !== null) {\n        material.priceVariance = Math.round((material.supplierPrice - material.adjustedPrice) * 100) / 100;\n        material.variancePercentage = Math.round(((material.supplierPrice - material.adjustedPrice) / material.adjustedPrice) * 1000) / 10;\n      }\n    }\n  });\n  \n  // Update market conditions\n  costReport.marketConditions.copperPrice = realCopperMultiplier;\n  costReport.marketConditions.realTimePricing = true;\n  costReport.marketConditions.copperPriceUSD = currentCopperPrice;\n  costReport.marketConditions.lastUpdated = copperData.json.timestamp;\n  \n  // Recalculate total cost\n  costReport.impact.totalCost = costReport.materials.reduce((sum, m) => sum + m.totalCost, 0);\n  costReport.summary.totalEstimatedCost = Math.round(costReport.impact.totalCost * 100) / 100;\n} else {\n  costReport.marketConditions.realTimePricing = false;\n  costReport.marketConditions.note = 'Using cached copper pricing';\n}\n\nreturn [{ json: costReport }];"
+      },
+      "id": "4d5e6f7g-8h9i-0j1k-2l3m-n4o5p6q7r8s9",
+      "name": "Apply Real-Time Pricing",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [680, 300]
+    },
+    {
+      "parameters": {
+        "operation": "insert",
+        "table": "material_cost_updates",
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "update_id": "={{ $json.updateId }}",
+            "project_id": "={{ $json.projectId }}",
+            "update_data": "={{ JSON.stringify($json) }}",
+            "total_cost": "={{ $json.summary.totalEstimatedCost }}",
+            "materials_count": "={{ $json.summary.materialsProcessed }}",
+            "risk_level": "={{ $json.impact.riskLevel }}",
+            "price_alerts": "={{ $json.summary.priceAlertsCount }}",
+            "location": "={{ $json.location }}",
+            "supplier": "={{ $json.supplier }}",
+            "update_type": "={{ $json.updateType }}",
+            "created_at": "={{ $json.timestamp }}"
+          }
+        }
+      },
+      "id": "5e6f7g8h-9i0j-1k2l-3m4n-o5p6q7r8s9t0",
+      "name": "Save Cost Update",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [900, 300],
+      "credentials": {
+        "postgres": {
+          "id": "postgres-electricalai",
+          "name": "ElectricalAI Database"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "high_risk",
+              "leftValue": "={{ $json.impact.riskLevel }}",
+              "rightValue": "high",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combineOperation": "any"
+        },
+        "options": {}
+      },
+      "id": "6f7g8h9i-0j1k-2l3m-4n5o-p6q7r8s9t0u1",
+      "name": "Check Risk Level",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1120, 300]
+    },
+    {
+      "parameters": {
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "requestMethod": "POST",
+        "url": "https://api.electricalai.pro/notifications/cost-alert",
+        "options": {
+          "timeout": 10000
+        },
+        "bodyParametersUi": {
+          "parameter": [
+            {
+              "name": "projectId",
+              "value": "={{ $('Save Cost Update').item.json.projectId }}"
+            },
+            {
+              "name": "riskLevel",
+              "value": "={{ $('Save Cost Update').item.json.impact.riskLevel }}"
+            },
+            {
+              "name": "totalCost",
+              "value": "={{ $('Save Cost Update').item.json.summary.totalEstimatedCost }}"
+            },
+            {
+              "name": "alerts",
+              "value": "={{ JSON.stringify($('Save Cost Update').item.json.trends.alerts) }}"
+            }
+          ]
+        }
+      },
+      "id": "7g8h9i0j-1k2l-3m4n-5o6p-q7r8s9t0u1v2",
+      "name": "Send Cost Alert",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [1340, 200]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Generate procurement recommendations\nconst costData = $('Save Cost Update').first().json;\n\n// Analyze materials for procurement optimization\nconst procurementAnalysis = {\n  bulkOpportunities: [],\n  alternativeMaterials: [],\n  supplierRecommendations: [],\n  timingRecommendations: []\n};\n\n// Group materials by category for bulk opportunities\nconst categoryTotals = {};\ncostData.materials.forEach(material => {\n  if (!categoryTotals[material.category]) {\n    categoryTotals[material.category] = {\n      totalCost: 0,\n      totalQuantity: 0,\n      materials: []\n    };\n  }\n  \n  categoryTotals[material.category].totalCost += material.totalCost;\n  categoryTotals[material.category].totalQuantity += material.quantity;\n  categoryTotals[material.category].materials.push(material);\n});\n\n// Identify bulk opportunities\nObject.entries(categoryTotals).forEach(([category, data]) => {\n  if (data.totalCost > 500) { // Minimum bulk threshold\n    procurementAnalysis.bulkOpportunities.push({\n      category,\n      totalCost: data.totalCost,\n      materialCount: data.materials.length,\n      potentialSavings: Math.round(data.totalCost * 0.08), // 8% bulk discount\n      recommendation: `Consider bulk purchasing ${category} materials for 8% savings`\n    });\n  }\n});\n\n// Identify volatile materials for timing recommendations\ncostData.materials.forEach(material => {\n  if (material.variancePercentage && Math.abs(material.variancePercentage) > 10) {\n    if (material.variancePercentage > 0) {\n      procurementAnalysis.timingRecommendations.push({\n        material: material.materialId,\n        action: 'purchase_soon',\n        reason: `Price increasing (${material.variancePercentage}%)`,\n        urgency: material.variancePercentage > 20 ? 'high' : 'medium'\n      });\n    } else {\n      procurementAnalysis.timingRecommendations.push({\n        material: material.materialId,\n        action: 'wait_for_further_decline',\n        reason: `Price declining (${material.variancePercentage}%)`,\n        urgency: 'low'\n      });\n    }\n  }\n});\n\n// Generate supplier recommendations based on variance\nconst supplierPerformance = {};\ncostData.materials.forEach(material => {\n  if (material.supplier && material.supplier !== 'unknown' && material.variancePercentage !== null) {\n    if (!supplierPerformance[material.supplier]) {\n      supplierPerformance[material.supplier] = {\n        materials: [],\n        avgVariance: 0,\n        totalSavings: 0\n      };\n    }\n    \n    supplierPerformance[material.supplier].materials.push(material);\n    supplierPerformance[material.supplier].totalSavings += (material.priceVariance || 0) * material.quantity;\n  }\n});\n\n// Calculate supplier performance metrics\nObject.entries(supplierPerformance).forEach(([supplier, data]) => {\n  const variances = data.materials.map(m => m.variancePercentage);\n  data.avgVariance = variances.reduce((sum, v) => sum + v, 0) / variances.length;\n  \n  procurementAnalysis.supplierRecommendations.push({\n    supplier,\n    materialCount: data.materials.length,\n    avgVariance: Math.round(data.avgVariance * 10) / 10,\n    totalSavings: Math.round(data.totalSavings * 100) / 100,\n    rating: data.avgVariance < -5 ? 'excellent' : data.avgVariance < 0 ? 'good' : data.avgVariance < 10 ? 'fair' : 'poor'\n  });\n});\n\n// Create comprehensive procurement report\nconst procurementReport = {\n  ...costData,\n  procurement: procurementAnalysis,\n  summary: {\n    ...costData.summary,\n    bulkSavingsOpportunity: procurementAnalysis.bulkOpportunities.reduce((sum, opp) => sum + opp.potentialSavings, 0),\n    urgentPurchases: procurementAnalysis.timingRecommendations.filter(r => r.urgency === 'high').length,\n    topSupplier: procurementAnalysis.supplierRecommendations.length > 0 ? \n      procurementAnalysis.supplierRecommendations.sort((a, b) => a.avgVariance - b.avgVariance)[0].supplier : null\n  }\n};\n\nreturn [{ json: procurementReport }];"
+      },
+      "id": "8h9i0j1k-2l3m-4n5o-6p7q-r8s9t0u1v2w3",
+      "name": "Generate Procurement Report",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1340, 400]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Format final response for API consumers\nconst fullReport = $('Generate Procurement Report').first().json;\n\nconst response = {\n  success: true,\n  updateId: fullReport.updateId,\n  projectId: fullReport.projectId,\n  costs: {\n    totalEstimated: fullReport.summary.totalEstimatedCost,\n    materialsProcessed: fullReport.summary.materialsProcessed,\n    riskLevel: fullReport.impact.riskLevel,\n    byCategory: fullReport.impact.costByCategory\n  },\n  pricing: {\n    copperMultiplier: fullReport.marketConditions.copperPrice,\n    locationMultiplier: fullReport.marketConditions.locationMultiplier,\n    marketTrend: fullReport.marketConditions.marketTrend,\n    realTimePricing: fullReport.marketConditions.realTimePricing || false\n  },\n  alerts: fullReport.trends.alerts.map(alert => ({\n    type: alert.type,\n    severity: alert.severity,\n    material: alert.material,\n    message: alert.message\n  })),\n  procurement: {\n    bulkSavings: fullReport.summary.bulkSavingsOpportunity || 0,\n    urgentPurchases: fullReport.summary.urgentPurchases || 0,\n    topSupplier: fullReport.summary.topSupplier,\n    opportunities: fullReport.procurement.bulkOpportunities.slice(0, 3), // Top 3\n    timing: fullReport.procurement.timingRecommendations.filter(r => r.urgency === 'high')\n  },\n  recommendations: fullReport.impact.recommendations,\n  timestamp: fullReport.timestamp,\n  location: fullReport.location\n};\n\nreturn [{ json: response }];"
+      },
+      "id": "9i0j1k2l-3m4n-5o6p-7q8r-s9t0u1v2w3x4",
+      "name": "Format Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1560, 300]
+    }
+  ],
+  "connections": {
+    "Webhook - Cost Update": {
+      "main": [
+        [
+          {
+            "node": "Process Material Costs",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Get Copper Prices",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Process Material Costs": {
+      "main": [
+        [
+          {
+            "node": "Apply Real-Time Pricing",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Copper Prices": {
+      "main": [
+        [
+          {
+            "node": "Apply Real-Time Pricing",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Apply Real-Time Pricing": {
+      "main": [
+        [
+          {
+            "node": "Save Cost Update",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save Cost Update": {
+      "main": [
+        [
+          {
+            "node": "Check Risk Level",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Risk Level": {
+      "main": [
+        [
+          {
+            "node": "Send Cost Alert",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Generate Procurement Report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Cost Alert": {
+      "main": [
+        [
+          {
+            "node": "Generate Procurement Report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate Procurement Report": {
+      "main": [
+        [
+          {
+            "node": "Format Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "staticData": null,
+  "tags": [
+    {
+      "createdAt": "2025-08-01T00:00:00.000Z",
+      "updatedAt": "2025-08-01T00:00:00.000Z",
+      "id": "material-cost-tracking",
+      "name": "ElectricalAI Pro"
+    }
+  ],
+  "triggerCount": 1,
+  "updatedAt": "2025-08-01T00:00:00.000Z",
+  "versionId": "1"
+}

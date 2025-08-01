@@ -1,0 +1,176 @@
+{
+  "name": "ElectricalAI Pro - Floor Plan Analysis",
+  "active": false,
+  "nodes": [
+    {
+      "parameters": {
+        "path": "floor-plan-upload",
+        "options": {
+          "binaryData": true
+        }
+      },
+      "id": "1a2b3c4d-5e6f-7g8h-9i0j-k1l2m3n4o5p6",
+      "name": "Webhook - Floor Plan Upload",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [240, 300],
+      "webhookId": "floor-plan-upload"
+    },
+    {
+      "parameters": {
+        "mode": "binaryToJson",
+        "options": {
+          "encoding": "base64"
+        }
+      },
+      "id": "2b3c4d5e-6f7g-8h9i-0j1k-l2m3n4o5p6q7",
+      "name": "Extract Image Data",
+      "type": "n8n-nodes-base.moveBinaryData",
+      "typeVersion": 1,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "resource": "image",
+        "operation": "analyze",
+        "prompt": "Analyze this electrical floor plan image and identify:\n\n1. **Room Layout**: List all rooms with approximate dimensions\n2. **Electrical Elements**: Identify existing outlets, switches, fixtures, panels\n3. **Load Requirements**: Estimate electrical load for each room based on:\n   - Room type and usage\n   - Appliance requirements\n   - Lighting needs\n   - Special equipment\n\n4. **Code Compliance**: Check for:\n   - Outlet spacing (NEC 210.52)\n   - GFCI requirements in bathrooms, kitchens\n   - AFCI requirements in living areas\n   - Dedicated circuits for kitchen/laundry\n\n5. **Recommendations**: Suggest:\n   - Additional outlets needed\n   - Circuit modifications\n   - Panel upgrades\n   - Safety improvements\n\nFormat response as structured JSON with coordinates for each identified element.",
+        "options": {
+          "maxTokens": 4000
+        }
+      },
+      "id": "3c4d5e6f-7g8h-9i0j-1k2l-m3n4o5p6q7r8",
+      "name": "AI Vision Analysis",
+      "type": "n8n-nodes-base.openAi",
+      "typeVersion": 1,
+      "position": [680, 300],
+      "credentials": {
+        "openAiApi": {
+          "id": "openai-electricalai",
+          "name": "ElectricalAI OpenAI"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parse and enhance AI vision analysis\nconst aiResponse = $input.first().json;\nconst originalData = $('Webhook - Floor Plan Upload').first().json;\n\n// Try to parse AI response as JSON, fallback to text processing\nlet analysisData;\ntry {\n  analysisData = typeof aiResponse.choices[0].message.content === 'string' \n    ? JSON.parse(aiResponse.choices[0].message.content)\n    : aiResponse.choices[0].message.content;\n} catch (e) {\n  // Fallback text processing\n  const content = aiResponse.choices[0].message.content;\n  analysisData = {\n    rawAnalysis: content,\n    parsed: false\n  };\n}\n\n// Generate electrical markup coordinates\nfunction generateElectricalMarkup(rooms) {\n  const markup = [];\n  const symbols = {\n    outlet: '⚡',\n    switch: '🔘', \n    fixture: '💡',\n    panel: '📦',\n    gfci: '🛡️'\n  };\n  \n  if (!rooms || !Array.isArray(rooms)) {\n    return markup;\n  }\n  \n  rooms.forEach((room, index) => {\n    const baseX = 100 + (index % 3) * 200;\n    const baseY = 100 + Math.floor(index / 3) * 150;\n    \n    // Add outlets based on room type\n    const outletCount = {\n      'living': 6,\n      'bedroom': 4,\n      'kitchen': 8,\n      'bathroom': 2,\n      'office': 4,\n      'dining': 2\n    }[room.type?.toLowerCase()] || 3;\n    \n    for (let i = 0; i < outletCount; i++) {\n      markup.push({\n        type: 'outlet',\n        symbol: symbols.outlet,\n        coordinates: {\n          x: baseX + (i * 30),\n          y: baseY + 20,\n          grid: `${String.fromCharCode(65 + Math.floor((baseX + i * 30) / 50))}${Math.floor((baseY + 20) / 25)}`\n        },\n        room: room.name,\n        specifications: {\n          type: room.type === 'bathroom' || room.type === 'kitchen' ? 'GFCI' : 'Standard',\n          circuit: `Circuit ${Math.floor(index / 2) + 1}`,\n          amperage: '15A'\n        }\n      });\n    }\n    \n    // Add switches\n    markup.push({\n      type: 'switch',\n      symbol: symbols.switch,\n      coordinates: {\n        x: baseX - 20,\n        y: baseY,\n        grid: `${String.fromCharCode(65 + Math.floor((baseX - 20) / 50))}${Math.floor(baseY / 25)}`\n      },\n      room: room.name,\n      specifications: {\n        type: 'Single Pole',\n        controls: 'Room Lighting'\n      }\n    });\n    \n    // Add fixtures\n    markup.push({\n      type: 'fixture',\n      symbol: symbols.fixture,\n      coordinates: {\n        x: baseX + 50,\n        y: baseY - 30,\n        grid: `${String.fromCharCode(65 + Math.floor((baseX + 50) / 50))}${Math.floor((baseY - 30) / 25)}`\n      },\n      room: room.name,\n      specifications: {\n        type: 'LED Ceiling',\n        wattage: room.type === 'kitchen' ? '60W' : '40W'\n      }\n    });\n  });\n  \n  return markup;\n}\n\n// Calculate load requirements\nfunction calculateRoomLoads(rooms) {\n  if (!rooms || !Array.isArray(rooms)) {\n    return { totalLoad: 3000, breakdown: [] };\n  }\n  \n  const loadFactors = {\n    'living': 3.0,\n    'bedroom': 2.5,\n    'kitchen': 7.5,\n    'bathroom': 3.5,\n    'office': 4.0,\n    'dining': 2.5,\n    'laundry': 5.0\n  };\n  \n  let totalLoad = 0;\n  const breakdown = rooms.map(room => {\n    const area = room.dimensions?.area || 150; // Default 150 sq ft\n    const factor = loadFactors[room.type?.toLowerCase()] || 3.0;\n    const load = Math.round(area * factor);\n    totalLoad += load;\n    \n    return {\n      room: room.name,\n      type: room.type,\n      area,\n      loadFactor: factor,\n      calculatedLoad: load\n    };\n  });\n  \n  return { totalLoad, breakdown };\n}\n\n// Generate compliance checklist\nfunction generateComplianceChecklist(rooms, markup) {\n  const checklist = [\n    {\n      code: 'NEC 210.52(A)',\n      requirement: 'Outlet spacing ≤6 feet',\n      status: 'review_required',\n      locations: markup.filter(m => m.type === 'outlet').map(m => m.coordinates.grid)\n    },\n    {\n      code: 'NEC 210.8(A)',\n      requirement: 'GFCI protection in bathrooms',\n      status: markup.some(m => m.room?.toLowerCase().includes('bathroom') && m.specifications?.type === 'GFCI') ? 'compliant' : 'non_compliant',\n      locations: markup.filter(m => m.room?.toLowerCase().includes('bathroom')).map(m => m.coordinates.grid)\n    },\n    {\n      code: 'NEC 210.8(A)', \n      requirement: 'GFCI protection in kitchens',\n      status: markup.some(m => m.room?.toLowerCase().includes('kitchen') && m.specifications?.type === 'GFCI') ? 'compliant' : 'non_compliant',\n      locations: markup.filter(m => m.room?.toLowerCase().includes('kitchen')).map(m => m.coordinates.grid)\n    },\n    {\n      code: 'NEC 210.12(A)',\n      requirement: 'AFCI protection in living areas',\n      status: 'review_required',\n      note: 'Verify AFCI breakers in panel'\n    }\n  ];\n  \n  return checklist;\n}\n\n// Process the analysis\nconst rooms = analysisData.rooms || [];\nconst electricalMarkup = generateElectricalMarkup(rooms);\nconst loadCalculations = calculateRoomLoads(rooms);\nconst complianceChecklist = generateComplianceChecklist(rooms, electricalMarkup);\n\n// Generate construction instructions\nconst constructionGuide = {\n  phases: [\n    {\n      phase: 1,\n      name: 'Rough-In Electrical',\n      tasks: electricalMarkup.map(item => ({\n        location: `Grid ${item.coordinates.grid} (${item.coordinates.x}\", ${item.coordinates.y}\")`,\n        action: `Install ${item.type}`,\n        specifications: item.specifications,\n        room: item.room\n      }))\n    },\n    {\n      phase: 2,\n      name: 'Panel and Circuit Configuration',\n      tasks: [\n        {\n          location: 'Main Panel',\n          action: 'Install circuit breakers',\n          specifications: {\n            totalCircuits: Math.ceil(electricalMarkup.length / 8),\n            panelSize: loadCalculations.totalLoad > 15000 ? '200A' : '100A'\n          }\n        }\n      ]\n    },\n    {\n      phase: 3,\n      name: 'Final Installation',\n      tasks: [\n        'Install outlet and switch covers',\n        'Test all circuits',\n        'Verify GFCI/AFCI operation',\n        'Complete electrical inspection'\n      ]\n    }\n  ]\n};\n\nconst result = {\n  projectId: originalData.projectId || `FP-${Date.now()}`,\n  timestamp: new Date().toISOString(),\n  floorPlanAnalysis: {\n    aiAnalysis: analysisData,\n    rooms: rooms.length,\n    electricalElements: electricalMarkup.length\n  },\n  electricalMarkup,\n  loadCalculations,\n  complianceChecklist,\n  constructionGuide,\n  summary: {\n    totalOutlets: electricalMarkup.filter(m => m.type === 'outlet').length,\n    totalSwitches: electricalMarkup.filter(m => m.type === 'switch').length,\n    totalFixtures: electricalMarkup.filter(m => m.type === 'fixture').length,\n    estimatedLoad: loadCalculations.totalLoad,\n    complianceScore: Math.round((complianceChecklist.filter(c => c.status === 'compliant').length / complianceChecklist.length) * 100)\n  },\n  generatedBy: 'ElectricalAI Pro Floor Plan Analyzer',\n  version: '1.0.0'\n};\n\nreturn [{ json: result }];"
+      },
+      "id": "4d5e6f7g-8h9i-0j1k-2l3m-n4o5p6q7r8s9",
+      "name": "Generate Markup",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [900, 300]
+    },
+    {
+      "parameters": {
+        "operation": "insert",
+        "table": "floor_plan_analyses",
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "project_id": "={{ $json.projectId }}",
+            "analysis_data": "={{ JSON.stringify($json) }}",
+            "total_elements": "={{ $json.summary.totalOutlets + $json.summary.totalSwitches + $json.summary.totalFixtures }}",
+            "estimated_load": "={{ $json.loadCalculations.totalLoad }}",
+            "compliance_score": "={{ $json.summary.complianceScore }}",
+            "created_at": "={{ $json.timestamp }}"
+          }
+        }
+      },
+      "id": "5e6f7g8h-9i0j-1k2l-3m4n-o5p6q7r8s9t0",
+      "name": "Save Analysis",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [1120, 300],
+      "credentials": {
+        "postgres": {
+          "id": "postgres-electricalai",
+          "name": "ElectricalAI Database"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Generate field crew instructions\nconst data = $input.first().json;\n\n// Create detailed installation guide\nconst fieldInstructions = {\n  projectId: data.projectId,\n  title: 'Electrical Installation Guide',\n  overview: {\n    totalElements: data.summary.totalOutlets + data.summary.totalSwitches + data.summary.totalFixtures,\n    estimatedHours: Math.ceil((data.summary.totalOutlets * 0.5) + (data.summary.totalSwitches * 0.3) + (data.summary.totalFixtures * 0.8)),\n    crewSize: data.summary.totalOutlets > 20 ? 3 : 2,\n    estimatedDays: Math.ceil(((data.summary.totalOutlets * 0.5) + (data.summary.totalSwitches * 0.3) + (data.summary.totalFixtures * 0.8)) / 8)\n  },\n  installation: data.constructionGuide.phases.map(phase => ({\n    ...phase,\n    estimatedHours: phase.tasks.length * 0.5,\n    tools: [\n      'Drill with bits',\n      'Wire strippers', \n      'Voltage tester',\n      'Fish tape',\n      'Level'\n    ],\n    safety: [\n      'Turn off power at main panel',\n      'Test circuits with voltage tester',\n      'Use proper PPE',\n      'Follow lockout/tagout procedures'\n    ]\n  })),\n  gridReference: {\n    description: 'Use grid coordinates for precise positioning',\n    example: 'Grid B3 means 6.5\" from left edge, 2.0\" down from reference point',\n    coordinates: data.electricalMarkup.map(item => ({\n      grid: item.coordinates.grid,\n      position: `${item.coordinates.x}\" x ${item.coordinates.y}\"`,\n      type: item.type,\n      room: item.room,\n      specs: item.specifications\n    }))\n  },\n  qualityChecks: [\n    'Verify all connections are tight',\n    'Test GFCI outlets with test button',\n    'Check switch operation',\n    'Measure voltage at all outlets',\n    'Verify proper grounding'\n  ],\n  complianceNotes: data.complianceChecklist.map(item => ({\n    code: item.code,\n    requirement: item.requirement,\n    status: item.status,\n    action: item.status === 'non_compliant' ? 'MUST FIX' : 'VERIFY'\n  }))\n};\n\nconst response = {\n  success: true,\n  projectId: data.projectId,\n  analysis: {\n    rooms: data.floorPlanAnalysis.rooms,\n    elements: data.electricalMarkup.length,\n    estimatedLoad: data.loadCalculations.totalLoad,\n    complianceScore: data.summary.complianceScore\n  },\n  markup: data.electricalMarkup,\n  fieldGuide: fieldInstructions,\n  nextSteps: [\n    'Review markup with project manager',\n    'Generate material list',\n    'Schedule electrical rough-in',\n    'Coordinate with other trades'\n  ],\n  timestamp: data.timestamp\n};\n\nreturn [{ json: response }];"
+      },
+      "id": "6f7g8h9i-0j1k-2l3m-4n5o-p6q7r8s9t0u1",
+      "name": "Format Field Guide",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1340, 300]
+    }
+  ],
+  "connections": {
+    "Webhook - Floor Plan Upload": {
+      "main": [
+        [
+          {
+            "node": "Extract Image Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Image Data": {
+      "main": [
+        [
+          {
+            "node": "AI Vision Analysis",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Vision Analysis": {
+      "main": [
+        [
+          {
+            "node": "Generate Markup",
+            "type": "main", 
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate Markup": {
+      "main": [
+        [
+          {
+            "node": "Save Analysis",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save Analysis": {
+      "main": [
+        [
+          {
+            "node": "Format Field Guide",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "staticData": null,
+  "tags": [
+    {
+      "createdAt": "2025-08-01T00:00:00.000Z",
+      "updatedAt": "2025-08-01T00:00:00.000Z", 
+      "id": "floor-plan-analysis",
+      "name": "ElectricalAI Pro"
+    }
+  ],
+  "triggerCount": 1,
+  "updatedAt": "2025-08-01T00:00:00.000Z",
+  "versionId": "1"
+}

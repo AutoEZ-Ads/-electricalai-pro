@@ -1,0 +1,102 @@
+{
+  "short_name": "ElectricalAI Pro",
+  "name": "ElectricalAI Pro - Construction Estimator",
+  "description": "AI-powered electrical construction estimation with automated NEC compliance checking and real-time material cost tracking for Monday.com",
+  "icons": [
+    {
+      "src": "favicon.ico",
+      "sizes": "64x64 32x32 24x24 16x16",
+      "type": "image/x-icon"
+    },
+    {
+      "src": "icon-192x192.png",
+      "type": "image/png",
+      "sizes": "192x192"
+    },
+    {
+      "src": "icon-512x512.png",
+      "type": "image/png",
+      "sizes": "512x512"
+    },
+    {
+      "src": "apple-touch-icon.png",
+      "type": "image/png",
+      "sizes": "180x180"
+    }
+  ],
+  "start_url": ".",
+  "display": "standalone",
+  "theme_color": "#667eea",
+  "background_color": "#ffffff",
+  "orientation": "portrait-primary",
+  "categories": ["productivity", "business", "utilities"],
+  "lang": "en-US",
+  "dir": "ltr",
+  "scope": "/",
+  "screenshots": [
+    {
+      "src": "screenshot-desktop.png",
+      "type": "image/png",
+      "sizes": "1280x720",
+      "form_factor": "wide"
+    },
+    {
+      "src": "screenshot-mobile.png", 
+      "type": "image/png",
+      "sizes": "640x1136",
+      "form_factor": "narrow"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "New Estimation",
+      "short_name": "New Estimate",
+      "description": "Create a new electrical estimation project",
+      "url": "/item-view",
+      "icons": [
+        {
+          "src": "shortcut-new-estimate.png",
+          "sizes": "96x96"
+        }
+      ]
+    },
+    {
+      "name": "Dashboard",
+      "short_name": "Dashboard",
+      "description": "View estimation dashboard",
+      "url": "/board-view",
+      "icons": [
+        {
+          "src": "shortcut-dashboard.png",
+          "sizes": "96x96"
+        }
+      ]
+    },
+    {
+      "name": "Settings",
+      "short_name": "Settings",
+      "description": "Configure N8N integration settings",
+      "url": "/integration-view",
+      "icons": [
+        {
+          "src": "shortcut-settings.png",
+          "sizes": "96x96"
+        }
+      ]
+    }
+  ],
+  "related_applications": [
+    {
+      "platform": "web",
+      "url": "https://electricalai.pro",
+      "id": "electricalai-web"
+    }
+  ],
+  "prefer_related_applications": false,
+  "edge_side_panel": {
+    "preferred_width": 400
+  },
+  "launch_handler": {
+    "client_mode": "focus-existing"
+  }
+}

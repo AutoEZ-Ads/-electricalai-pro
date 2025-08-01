@@ -1,0 +1,147 @@
+# 🚀 N8N Standalone Docker Configuration
+# For local development and Render.com deployment
+
+services:
+  # PostgreSQL Database for N8N
+  n8n-postgres:
+    image: postgres:14-alpine
+    container_name: n8n-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: n8n_user
+      POSTGRES_PASSWORD: ${N8N_DB_PASSWORD:-n8n_password}
+      POSTGRES_DB: n8n_db
+    volumes:
+      - n8n_postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5440:5432"
+    networks:
+      - n8n-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U n8n_user -d n8n_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # N8N Workflow Automation Engine
+  n8n:
+    image: n8nio/n8n:latest
+    container_name: n8n-app
+    restart: unless-stopped
+    environment:
+      # Database Configuration
+      DB_TYPE: postgresdb
+      DB_POSTGRESDB_HOST: n8n-postgres
+      DB_POSTGRESDB_PORT: 5432
+      DB_POSTGRESDB_DATABASE: n8n_db
+      DB_POSTGRESDB_USER: n8n_user
+      DB_POSTGRESDB_PASSWORD: ${N8N_DB_PASSWORD:-n8n_password}
+      
+      # N8N Configuration
+      N8N_HOST: ${N8N_HOST:-localhost}
+      N8N_PORT: 5678
+      N8N_PROTOCOL: ${N8N_PROTOCOL:-http}
+      NODE_ENV: ${NODE_ENV:-development}
+      
+      # Authentication
+      N8N_BASIC_AUTH_ACTIVE: ${N8N_BASIC_AUTH_ACTIVE:-true}
+      N8N_BASIC_AUTH_USER: ${N8N_BASIC_AUTH_USER:-admin}
+      N8N_BASIC_AUTH_PASSWORD: ${N8N_BASIC_AUTH_PASSWORD:-admin}
+      N8N_SECURE_COOKIE: false
+      
+      # Webhook URL
+      WEBHOOK_URL: ${N8N_WEBHOOK_URL:-http://localhost:5678/}
+      
+      # Executions
+      EXECUTIONS_PROCESS: main
+      EXECUTIONS_DATA_PRUNE: true
+      EXECUTIONS_DATA_MAX_AGE: 336
+      
+      # ElectricalAI Pro Integration
+      ELECTRICALAI_API_URL: ${ELECTRICALAI_API_URL:-http://host.docker.internal:8000}
+      ELECTRICALAI_API_KEY: ${ELECTRICALAI_API_KEY:-your_api_key}
+      
+      # External Services
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+      CLAUDE_API_KEY: ${CLAUDE_API_KEY}
+    ports:
+      - "5678:5678"
+    volumes:
+      - n8n_data:/home/node/.n8n
+      - ./workflows:/home/node/.n8n/workflows
+      - ./custom-nodes:/home/node/.n8n/custom
+      - ./credentials:/home/node/.n8n/credentials
+    networks:
+      - n8n-network
+    depends_on:
+      n8n-postgres:
+        condition: service_healthy
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  # Redis for Queue Management (Optional)
+  n8n-redis:
+    image: redis:7-alpine
+    container_name: n8n-redis
+    restart: unless-stopped
+    ports:
+      - "6380:6379"
+    volumes:
+      - n8n_redis_data:/data
+    networks:
+      - n8n-network
+    command: redis-server --appendonly yes
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # N8N Worker (For Scaling)
+  n8n-worker:
+    image: n8nio/n8n:latest
+    container_name: n8n-worker
+    restart: unless-stopped
+    environment:
+      # Database Configuration (same as main n8n)
+      DB_TYPE: postgresdb
+      DB_POSTGRESDB_HOST: n8n-postgres
+      DB_POSTGRESDB_PORT: 5432
+      DB_POSTGRESDB_DATABASE: n8n_db
+      DB_POSTGRESDB_USER: n8n_user
+      DB_POSTGRESDB_PASSWORD: ${N8N_DB_PASSWORD:-n8n_password}
+      
+      # Worker Mode
+      EXECUTIONS_MODE: queue
+      EXECUTIONS_PROCESS: worker
+      
+      # Queue Configuration
+      QUEUE_BULL_REDIS_HOST: n8n-redis
+      QUEUE_BULL_REDIS_PORT: 6379
+      
+      # ElectricalAI Pro Integration
+      ELECTRICALAI_API_URL: ${ELECTRICALAI_API_URL:-http://host.docker.internal:8000}
+      ELECTRICALAI_API_KEY: ${ELECTRICALAI_API_KEY:-your_api_key}
+    volumes:
+      - n8n_data:/home/node/.n8n
+      - ./workflows:/home/node/.n8n/workflows
+      - ./custom-nodes:/home/node/.n8n/custom
+    networks:
+      - n8n-network
+    depends_on:
+      - n8n-postgres
+      - n8n-redis
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+volumes:
+  n8n_postgres_data:
+    driver: local
+  n8n_data:
+    driver: local
+  n8n_redis_data:
+    driver: local
+
+networks:
+  n8n-network:
+    driver: bridge

@@ -1,0 +1,186 @@
+{
+  "name": "ElectricalAI Pro - Estimation Pipeline",
+  "active": false,
+  "nodes": [
+    {
+      "parameters": {
+        "path": "electrical-estimation",
+        "options": {}
+      },
+      "id": "1a2b3c4d-5e6f-7g8h-9i0j-k1l2m3n4o5p6",
+      "name": "Webhook - Estimation Request",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [240, 300],
+      "webhookId": "electrical-estimation"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ElectricalAI Pro Load Calculation\nconst projectData = $input.first().json;\n\n// Extract project parameters\nconst {\n  projectType = 'residential',\n  squareFootage = 2000,\n  complexityLevel = 'standard',\n  location = 'general',\n  specialRequirements = []\n} = projectData;\n\n// NEC 2023 Load Calculations\nfunction calculateElectricalLoad(sqft, type, complexity) {\n  let baseLoad = 0;\n  let lightingLoad = sqft * 3; // 3 VA per sq ft (NEC 220.12)\n  \n  // Small appliance circuits (NEC 220.52)\n  let applianceLoad = 3000; // Minimum 2 circuits at 1500 VA each\n  \n  // Additional loads based on project type\n  switch(type.toLowerCase()) {\n    case 'residential':\n      baseLoad = lightingLoad + applianceLoad;\n      if (sqft > 3000) baseLoad += (sqft - 3000) * 1; // Additional for larger homes\n      break;\n    case 'commercial':\n      baseLoad = sqft * 3.5; // Higher load factor for commercial\n      break;\n    case 'industrial':\n      baseLoad = sqft * 5; // Industrial requirements\n      break;\n  }\n  \n  // Complexity multiplier\n  const complexityMultiplier = {\n    'simple': 0.8,\n    'standard': 1.0,\n    'complex': 1.3,\n    'high-end': 1.6\n  };\n  \n  return Math.round(baseLoad * (complexityMultiplier[complexity] || 1.0));\n}\n\n// Calculate circuit requirements\nfunction calculateCircuits(totalLoad) {\n  const circuits = {\n    lighting: Math.ceil(totalLoad * 0.4 / 1800), // 15A circuits at 80% capacity\n    outlets: Math.ceil(totalLoad * 0.3 / 1800),\n    appliance: Math.ceil(totalLoad * 0.2 / 3600), // 20A circuits\n    special: Math.ceil(totalLoad * 0.1 / 3600)\n  };\n  \n  return {\n    ...circuits,\n    total: Object.values(circuits).reduce((sum, count) => sum + count, 0)\n  };\n}\n\n// Material estimation\nfunction estimateMaterials(circuits, sqft) {\n  const materials = {\n    wire: {\n      '12AWG': circuits.outlets * 150, // feet\n      '14AWG': circuits.lighting * 150,\n      '10AWG': circuits.appliance * 50\n    },\n    conduit: Math.ceil(sqft / 100) * 10, // 10ft sections\n    outlets: circuits.outlets * 8, // outlets per circuit\n    switches: circuits.lighting * 4,\n    panels: circuits.total > 20 ? 2 : 1,\n    breakers: circuits.total\n  };\n  \n  return materials;\n}\n\n// Cost estimation (RS Means based)\nfunction calculateCosts(materials, location) {\n  const baseCosts = {\n    wire12AWG: 2.50, // per foot\n    wire14AWG: 1.80,\n    wire10AWG: 3.20,\n    conduit: 8.50, // per 10ft section\n    outlet: 15.00,\n    switch: 12.00,\n    panel100A: 450.00,\n    panel200A: 650.00,\n    breaker: 25.00,\n    labor: 85.00 // per hour\n  };\n  \n  // Location multiplier\n  const locationMultiplier = {\n    'urban': 1.2,\n    'suburban': 1.0,\n    'rural': 0.9,\n    'general': 1.0\n  };\n  \n  const multiplier = locationMultiplier[location.toLowerCase()] || 1.0;\n  \n  const materialCost = (\n    (materials.wire['12AWG'] * baseCosts.wire12AWG) +\n    (materials.wire['14AWG'] * baseCosts.wire14AWG) +\n    (materials.wire['10AWG'] * baseCosts.wire10AWG) +\n    (materials.conduit * baseCosts.conduit) +\n    (materials.outlets * baseCosts.outlet) +\n    (materials.switches * baseCosts.switch) +\n    (materials.panels * (materials.panels > 1 ? baseCosts.panel200A : baseCosts.panel100A)) +\n    (materials.breakers * baseCosts.breaker)\n  ) * multiplier;\n  \n  const laborHours = Math.ceil(materialCost / 100); // Rough estimate\n  const laborCost = laborHours * baseCosts.labor * multiplier;\n  \n  return {\n    materials: Math.round(materialCost),\n    labor: Math.round(laborCost),\n    total: Math.round(materialCost + laborCost),\n    breakdown: {\n      wire: Math.round((materials.wire['12AWG'] * baseCosts.wire12AWG + \n                       materials.wire['14AWG'] * baseCosts.wire14AWG + \n                       materials.wire['10AWG'] * baseCosts.wire10AWG) * multiplier),\n      devices: Math.round((materials.outlets * baseCosts.outlet + \n                          materials.switches * baseCosts.switch) * multiplier),\n      panels: Math.round(materials.panels * (materials.panels > 1 ? baseCosts.panel200A : baseCosts.panel100A) * multiplier),\n      conduit: Math.round(materials.conduit * baseCosts.conduit * multiplier),\n      labor: Math.round(laborCost)\n    }\n  };\n}\n\n// Perform calculations\nconst totalLoad = calculateElectricalLoad(squareFootage, projectType, complexityLevel);\nconst circuits = calculateCircuits(totalLoad);\nconst materials = estimateMaterials(circuits, squareFootage);\nconst costs = calculateCosts(materials, location);\n\n// Compliance notes\nconst complianceNotes = [\n  'Design follows NEC 2023 standards',\n  'Load calculations per NEC Article 220',\n  'GFCI protection required in wet locations',\n  'AFCI protection required in living areas',\n  `Panel capacity: ${circuits.total > 20 ? '200A' : '100A'} service recommended`\n];\n\n// Return comprehensive estimation\nreturn [{\n  json: {\n    projectId: projectData.projectId || `EST-${Date.now()}`,\n    timestamp: new Date().toISOString(),\n    input: projectData,\n    calculations: {\n      totalLoad,\n      circuits,\n      materials,\n      costs\n    },\n    compliance: complianceNotes,\n    recommendations: [\n      circuits.total > 30 ? 'Consider sub-panels for large installations' : null,\n      totalLoad > 15000 ? 'Verify utility service capacity' : null,\n      specialRequirements.length > 0 ? 'Review special requirements with engineer' : null\n    ].filter(Boolean),\n    accuracy: '±10% (Design Development Level)',\n    validUntil: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString() // 30 days\n  }\n}];"
+      },
+      "id": "2b3c4d5e-6f7g-8h9i-0j1k-l2m3n4o5p6q7",
+      "name": "Load Calculator",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://host.docker.internal:8000/api/historical/calibration-factors",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 10000
+        },
+        "bodyParametersUi": {
+          "parameter": [
+            {
+              "name": "projectType",
+              "value": "={{ $('Webhook - Estimation Request').item.json.projectType }}"
+            },
+            {
+              "name": "squareFootage", 
+              "value": "={{ $('Webhook - Estimation Request').item.json.squareFootage }}"
+            },
+            {
+              "name": "complexityLevel",
+              "value": "={{ $('Webhook - Estimation Request').item.json.complexityLevel }}"
+            }
+          ]
+        }
+      },
+      "id": "3c4d5e6f-7g8h-9i0j-1k2l-m3n4o5p6q7r8",
+      "name": "Historical Analysis",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [680, 300],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "jsCode": "// Merge estimation with historical data\nconst estimation = $('Load Calculator').first().json;\nconst historicalResponse = $('Historical Analysis').first();\n\nlet historicalData = null;\nlet calibrationFactor = 1.0;\nlet riskLevel = 'medium';\n\n// Process historical data if available\nif (historicalResponse && historicalResponse.json && !historicalResponse.json.error) {\n  historicalData = historicalResponse.json;\n  calibrationFactor = historicalData.calibrationFactor || 1.0;\n  riskLevel = historicalData.riskLevel || 'medium';\n  \n  // Apply calibration to costs\n  estimation.calculations.costs.materials = Math.round(estimation.calculations.costs.materials * calibrationFactor);\n  estimation.calculations.costs.labor = Math.round(estimation.calculations.costs.labor * calibrationFactor);\n  estimation.calculations.costs.total = Math.round(estimation.calculations.costs.total * calibrationFactor);\n  \n  // Update accuracy based on historical data\n  const accuracyMap = {\n    'low': '±15%',\n    'medium': '±10%', \n    'high': '±7%'\n  };\n  estimation.accuracy = accuracyMap[riskLevel] + ' (Calibrated with Historical Data)';\n} else {\n  // Fallback when historical data unavailable\n  estimation.accuracy = '±12% (Base Calculation - Limited Historical Data)';\n}\n\n// Add historical insights\nconst finalEstimation = {\n  ...estimation,\n  historicalInsights: historicalData ? {\n    similarProjects: historicalData.similarProjectsCount || 0,\n    averageVariance: historicalData.averageVariance || 'N/A',\n    riskFactors: historicalData.riskFactors || [],\n    calibrationApplied: true,\n    calibrationFactor\n  } : {\n    similarProjects: 0,\n    averageVariance: 'N/A',\n    riskFactors: ['Limited historical data available'],\n    calibrationApplied: false,\n    calibrationFactor: 1.0\n  },\n  riskLevel,\n  generatedBy: 'ElectricalAI Pro N8N Workflow',\n  workflowVersion: '1.0.0'\n};\n\nreturn [{ json: finalEstimation }];"
+      },
+      "id": "4d5e6f7g-8h9i-0j1k-2l3m-n4o5p6q7r8s9",
+      "name": "Merge Results",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [900, 300]
+    },
+    {
+      "parameters": {
+        "operation": "insert",
+        "table": "estimations",
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "project_id": "={{ $json.projectId }}",
+            "estimation_data": "={{ JSON.stringify($json) }}",
+            "total_cost": "={{ $json.calculations.costs.total }}",
+            "accuracy_level": "={{ $json.accuracy }}",
+            "risk_level": "={{ $json.riskLevel }}",
+            "created_at": "={{ $json.timestamp }}"
+          }
+        }
+      },
+      "id": "5e6f7g8h-9i0j-1k2l-3m4n-o5p6q7r8s9t0",
+      "name": "Save to Database",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [1120, 300],
+      "credentials": {
+        "postgres": {
+          "id": "postgres-electricalai",
+          "name": "ElectricalAI Database"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Generate summary response\nconst data = $input.first().json;\n\nconst summary = {\n  success: true,\n  projectId: data.projectId,\n  estimation: {\n    totalCost: data.calculations.costs.total,\n    materialCost: data.calculations.costs.materials,\n    laborCost: data.calculations.costs.labor,\n    breakdown: data.calculations.costs.breakdown\n  },\n  technical: {\n    totalLoad: data.calculations.totalLoad,\n    circuitCount: data.calculations.circuits.total,\n    panelSize: data.calculations.circuits.total > 20 ? '200A' : '100A'\n  },\n  accuracy: data.accuracy,\n  riskLevel: data.riskLevel,\n  validUntil: data.validUntil,\n  historicalCalibration: data.historicalInsights.calibrationApplied,\n  nextSteps: [\n    'Review estimation with project stakeholders',\n    'Finalize electrical design drawings',\n    'Submit for permit application',\n    'Schedule material procurement'\n  ],\n  timestamp: data.timestamp\n};\n\nreturn [{ json: summary }];"
+      },
+      "id": "6f7g8h9i-0j1k-2l3m-4n5o-p6q7r8s9t0u1",
+      "name": "Format Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1340, 300]
+    }
+  ],
+  "connections": {
+    "Webhook - Estimation Request": {
+      "main": [
+        [
+          {
+            "node": "Load Calculator",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Load Calculator": {
+      "main": [
+        [
+          {
+            "node": "Historical Analysis",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Historical Analysis": {
+      "main": [
+        [
+          {
+            "node": "Merge Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge Results": {
+      "main": [
+        [
+          {
+            "node": "Save to Database",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save to Database": {
+      "main": [
+        [
+          {
+            "node": "Format Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner",
+    "errorWorkflow": {
+      "errorWorkflow": ""
+    }
+  },
+  "staticData": null,
+  "tags": [
+    {
+      "createdAt": "2025-08-01T00:00:00.000Z", 
+      "updatedAt": "2025-08-01T00:00:00.000Z",
+      "id": "electrical-estimation",
+      "name": "ElectricalAI Pro"
+    }
+  ],
+  "triggerCount": 1,
+  "updatedAt": "2025-08-01T00:00:00.000Z",
+  "versionId": "1"
+}

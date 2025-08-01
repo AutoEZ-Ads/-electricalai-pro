@@ -1,0 +1,271 @@
+{
+  "name": "Electrical Estimation Workflow",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "electrical-estimation",
+        "responseMode": "responseNode"
+      },
+      "id": "webhook-trigger",
+      "name": "Webhook Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [240, 300],
+      "webhookId": "electrical-estimation"
+    },
+    {
+      "parameters": {
+        "mode": "passThrough"
+      },
+      "id": "merge-data",
+      "name": "Merge Data",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 2,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "calculationType": "load",
+        "area": "={{ $json.project_data.square_footage }}",
+        "buildingType": "={{ $json.project_data.building_type }}",
+        "voltage": 240
+      },
+      "id": "calculate-load",
+      "name": "Calculate Load",
+      "type": "electricalCalculator",
+      "typeVersion": 1,
+      "position": [680, 200]
+    },
+    {
+      "parameters": {
+        "calculationType": "service",
+        "area": "={{ $json.project_data.square_footage }}",
+        "buildingType": "={{ $json.project_data.building_type }}"
+      },
+      "id": "calculate-service",
+      "name": "Calculate Service Size",
+      "type": "electricalCalculator", 
+      "typeVersion": 1,
+      "position": [680, 400]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT * FROM electrical_components WHERE active = true ORDER BY category, name",
+        "additionalFields": {}
+      },
+      "id": "get-components",
+      "name": "Get Components",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2,
+      "position": [900, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Calculate material costs based on project specifications\nconst projectData = $input.first().json.project_data;\nconst loadCalculation = $input.first().json.load_calculation;\nconst serviceCalculation = $input.first().json.service_calculation;\nconst components = $input.all().slice(1); // Skip first item which is project data\n\n// Basic material estimation based on square footage and building type\nlet materialCost = 0;\nlet laborCost = 0;\nlet componentList = [];\n\nconst squareFootage = projectData.square_footage || 1000;\nconst buildingType = projectData.building_type || 'residential';\n\n// Calculate based on typical electrical densities\nconst densityMultipliers = {\n  residential: 3.5, // $3.50 per sq ft\n  commercial: 5.5,  // $5.50 per sq ft\n  industrial: 4.0   // $4.00 per sq ft\n};\n\nconst baseCostPerSqFt = densityMultipliers[buildingType] || 3.5;\nmaterialCost = squareFootage * baseCostPerSqFt;\n\n// Labor is typically 40-60% of material cost for electrical work\nlaborCost = materialCost * 0.5;\n\n// Add service upgrade costs if needed\nif (serviceCalculation && serviceCalculation.recommendedServiceSize > 100) {\n  const serviceUpgradeCost = (serviceCalculation.recommendedServiceSize - 100) * 5;\n  materialCost += serviceUpgradeCost;\n  laborCost += serviceUpgradeCost * 0.4;\n}\n\n// Equipment costs (panels, breakers, etc.)\nconst equipmentCost = materialCost * 0.2;\n\n// Total project cost with markup\nconst totalCost = (materialCost + laborCost + equipmentCost) * 1.15; // 15% markup\n\n// Calculate confidence score based on data completeness\nlet confidenceScore = 70; // Base confidence\nif (projectData.square_footage) confidenceScore += 10;\nif (projectData.project_specifications) confidenceScore += 10;\nif (loadCalculation && serviceCalculation) confidenceScore += 10;\n\nreturn [{\n  project_id: $input.first().json.project_id,\n  estimation_id: $input.first().json.estimation_id,\n  calculations: {\n    load_calculation: loadCalculation,\n    service_calculation: serviceCalculation,\n    material_breakdown: {\n      base_material: materialCost,\n      labor: laborCost,\n      equipment: equipmentCost,\n      markup_percentage: 15\n    }\n  },\n  material_cost: Math.round(materialCost),\n  labor_cost: Math.round(laborCost),\n  equipment_cost: Math.round(equipmentCost),\n  total_cost: Math.round(totalCost),\n  confidence_score: Math.min(confidenceScore, 100),\n  status: 'completed',\n  accuracy_level: 'preliminary'\n}];"
+      },
+      "id": "calculate-costs",
+      "name": "Calculate Costs",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1120, 300]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE estimations SET status = $1, calculations = $2, material_cost = $3, labor_cost = $4, equipment_cost = $5, total_cost = $6, confidence_score = $7, accuracy_level = $8, completed_at = NOW() WHERE id = $9",
+        "additionalFields": {
+          "valuesUi": {
+            "values": [
+              {
+                "column": "status",
+                "value": "={{ $json.status }}"
+              },
+              {
+                "column": "calculations", 
+                "value": "={{ JSON.stringify($json.calculations) }}"
+              },
+              {
+                "column": "material_cost",
+                "value": "={{ $json.material_cost }}"
+              },
+              {
+                "column": "labor_cost",
+                "value": "={{ $json.labor_cost }}"
+              },
+              {
+                "column": "equipment_cost",
+                "value": "={{ $json.equipment_cost }}"
+              },
+              {
+                "column": "total_cost",
+                "value": "={{ $json.total_cost }}"
+              },
+              {
+                "column": "confidence_score",
+                "value": "={{ $json.confidence_score }}"
+              },
+              {
+                "column": "accuracy_level",
+                "value": "={{ $json.accuracy_level }}"
+              },
+              {
+                "column": "estimation_id",
+                "value": "={{ $json.estimation_id }}"
+              }
+            ]
+          }
+        }
+      },
+      "id": "update-estimation",
+      "name": "Update Estimation", 
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2,
+      "position": [1340, 300]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE projects SET status = 'completed' WHERE id = $1",
+        "additionalFields": {
+          "valuesUi": {
+            "values": [
+              {
+                "column": "project_id",
+                "value": "={{ $json.project_id }}"
+              }
+            ]
+          }
+        }
+      },
+      "id": "update-project-status",
+      "name": "Update Project Status",
+      "type": "n8n-nodes-base.postgres", 
+      "typeVersion": 2,
+      "position": [1560, 300]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { success: true, estimation_id: $json.estimation_id, total_cost: $json.total_cost, confidence_score: $json.confidence_score } }}"
+      },
+      "id": "webhook-response",
+      "name": "Webhook Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [1780, 300]
+    }
+  ],
+  "connections": {
+    "Webhook Trigger": {
+      "main": [
+        [
+          {
+            "node": "Merge Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge Data": {
+      "main": [
+        [
+          {
+            "node": "Calculate Load",
+            "type": "main", 
+            "index": 0
+          },
+          {
+            "node": "Calculate Service Size",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Calculate Load": {
+      "main": [
+        [
+          {
+            "node": "Get Components",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Calculate Service Size": {
+      "main": [
+        [
+          {
+            "node": "Get Components", 
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Components": {
+      "main": [
+        [
+          {
+            "node": "Calculate Costs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Calculate Costs": {
+      "main": [
+        [
+          {
+            "node": "Update Estimation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Estimation": {
+      "main": [
+        [
+          {
+            "node": "Update Project Status",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Project Status": {
+      "main": [
+        [
+          {
+            "node": "Webhook Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "createdAt": "2024-01-15T10:00:00.000Z",
+  "updatedAt": "2024-01-15T10:00:00.000Z",
+  "settings": {
+    "timezone": "America/New_York"
+  },
+  "staticData": null,
+  "tags": [
+    {
+      "id": "electrical",
+      "name": "electrical"
+    },
+    {
+      "id": "estimation", 
+      "name": "estimation"
+    }
+  ]
+}

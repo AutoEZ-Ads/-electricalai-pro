@@ -1,0 +1,58 @@
+# 🚀 N8N Dockerfile for Render.com Deployment
+# Optimized for ElectricalAI Pro workflow automation
+
+FROM n8nio/n8n:latest
+
+# Switch to root for package installation
+USER root
+
+# Install additional dependencies for ElectricalAI Pro
+RUN apk add --no-cache \
+    python3 \
+    py3-pip \
+    postgresql-client \
+    curl \
+    jq \
+    tzdata
+
+# Set timezone
+ENV TZ=America/New_York
+RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
+
+# Create directories for custom nodes and workflows
+RUN mkdir -p /home/node/.n8n/custom \
+    && mkdir -p /home/node/.n8n/workflows \
+    && mkdir -p /home/node/.n8n/credentials \
+    && mkdir -p /home/node/.n8n/nodes
+
+# Copy custom nodes for ElectricalAI Pro
+COPY ./custom-nodes/ElectricalLoadCalculator.node.ts /home/node/.n8n/custom/
+COPY ./custom-nodes/ImprovedElectricalLoadCalculator.node.ts /home/node/.n8n/custom/
+COPY ./custom-nodes/electrical-calculator-node/package.json /home/node/.n8n/custom/
+
+# Copy workflow templates
+COPY ./workflows/*.json /home/node/.n8n/workflows/
+
+# Install custom node dependencies
+WORKDIR /home/node/.n8n/custom
+RUN npm install --production
+
+# Copy startup script
+COPY ./scripts/n8n-startup.sh /usr/local/bin/n8n-startup.sh
+RUN chmod +x /usr/local/bin/n8n-startup.sh
+
+# Switch back to node user
+USER node
+
+# Set working directory
+WORKDIR /home/node
+
+# Expose N8N port
+EXPOSE 5678
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
+    CMD curl -f http://localhost:5678/healthz || exit 1
+
+# Start N8N with custom startup script
+CMD ["/usr/local/bin/n8n-startup.sh"]

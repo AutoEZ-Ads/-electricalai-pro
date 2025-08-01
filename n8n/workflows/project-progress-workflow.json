@@ -1,0 +1,295 @@
+{
+  "name": "ElectricalAI Pro - Project Progress Monitor",
+  "active": false,
+  "nodes": [
+    {
+      "parameters": {
+        "path": "project-progress-update",
+        "options": {}
+      },
+      "id": "1a2b3c4d-5e6f-7g8h-9i0j-k1l2m3n4o5p6",
+      "name": "Webhook - Progress Update",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [240, 300],
+      "webhookId": "project-progress-update"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Project Progress Monitoring and Analytics\n// Real-time project tracking with predictive insights\n\nconst progressData = $input.first().json;\n\n// Extract progress update information\nconst {\n  projectId,\n  updateType = 'status', // status, milestone, issue, completion, quality_check\n  phase = 'planning', // planning, design, permitting, rough_in, inspection, trim, final\n  completedTasks = [],\n  issues = [],\n  qualityMetrics = {},\n  timeTracking = {},\n  costTracking = {},\n  teamUpdates = [],\n  customerFeedback = null,\n  timestamp = new Date().toISOString(),\n  reportedBy = 'system'\n} = progressData;\n\n// Project phase definitions and typical durations\nconst projectPhases = {\n  planning: {\n    name: 'Project Planning',\n    typicalDuration: 3, // days\n    dependencies: [],\n    deliverables: ['project_scope', 'material_list', 'timeline'],\n    milestones: ['scope_approved', 'permits_submitted']\n  },\n  design: {\n    name: 'Electrical Design',\n    typicalDuration: 5,\n    dependencies: ['planning'],\n    deliverables: ['electrical_plans', 'load_calculations', 'panel_schedule'],\n    milestones: ['design_complete', 'engineer_approval']\n  },\n  permitting: {\n    name: 'Permit & Approval',\n    typicalDuration: 10,\n    dependencies: ['design'],\n    deliverables: ['building_permit', 'electrical_permit', 'inspection_schedule'],\n    milestones: ['permits_approved', 'inspection_scheduled']\n  },\n  rough_in: {\n    name: 'Rough-In Installation',\n    typicalDuration: 8,\n    dependencies: ['permitting'],\n    deliverables: ['conduit_installation', 'wire_pulling', 'box_installation'],\n    milestones: ['rough_in_complete', 'rough_inspection_passed']\n  },\n  inspection: {\n    name: 'Inspections',\n    typicalDuration: 2,\n    dependencies: ['rough_in'],\n    deliverables: ['inspection_reports', 'correction_list'],\n    milestones: ['inspection_passed', 'corrections_complete']\n  },\n  trim: {\n    name: 'Trim & Finish',\n    typicalDuration: 6,\n    dependencies: ['inspection'],\n    deliverables: ['device_installation', 'fixture_installation', 'panel_labeling'],\n    milestones: ['trim_complete', 'system_testing']\n  },\n  final: {\n    name: 'Final & Closeout',\n    typicalDuration: 3,\n    dependencies: ['trim'],\n    deliverables: ['final_inspection', 'system_documentation', 'customer_training'],\n    milestones: ['final_inspection_passed', 'project_closed']\n  }\n};\n\n// Calculate overall project progress\nfunction calculateProjectProgress(currentPhase, completedTasks, issues) {\n  const phaseOrder = ['planning', 'design', 'permitting', 'rough_in', 'inspection', 'trim', 'final'];\n  const currentPhaseIndex = phaseOrder.indexOf(currentPhase);\n  \n  if (currentPhaseIndex === -1) {\n    return { overallProgress: 0, phaseProgress: 0, status: 'unknown' };\n  }\n  \n  // Calculate completed phases\n  const phasesCompleted = currentPhaseIndex;\n  const totalPhases = phaseOrder.length;\n  \n  // Calculate current phase progress based on deliverables\n  const currentPhaseInfo = projectPhases[currentPhase];\n  const phaseDeliverables = currentPhaseInfo.deliverables;\n  const completedDeliverables = completedTasks.filter(task => \n    phaseDeliverables.includes(task.taskId) && task.status === 'completed'\n  ).length;\n  \n  const phaseProgress = phaseDeliverables.length > 0 ? \n    (completedDeliverables / phaseDeliverables.length) * 100 : 0;\n  \n  // Calculate overall progress\n  const overallProgress = ((phasesCompleted + (phaseProgress / 100)) / totalPhases) * 100;\n  \n  // Determine project status\n  let status = 'on_track';\n  const criticalIssues = issues.filter(issue => issue.severity === 'critical').length;\n  const majorIssues = issues.filter(issue => issue.severity === 'major').length;\n  \n  if (criticalIssues > 0) {\n    status = 'critical';\n  } else if (majorIssues > 2) {\n    status = 'at_risk';\n  } else if (overallProgress < 10) {\n    status = 'delayed';\n  }\n  \n  return {\n    overallProgress: Math.round(overallProgress * 10) / 10,\n    phaseProgress: Math.round(phaseProgress * 10) / 10,\n    currentPhase,\n    phasesCompleted,\n    totalPhases,\n    status,\n    nextPhase: currentPhaseIndex < totalPhases - 1 ? phaseOrder[currentPhaseIndex + 1] : null\n  };\n}\n\n// Analyze timeline performance\nfunction analyzeTimelinePerformance(phase, timeTracking, projectPhases) {\n  const performance = {\n    currentPhase: phase,\n    onSchedule: true,\n    daysSpent: 0,\n    estimatedDays: projectPhases[phase]?.typicalDuration || 0,\n    variance: 0,\n    projectedCompletion: null,\n    risks: []\n  };\n  \n  if (timeTracking && timeTracking.phaseStartDate) {\n    const startDate = new Date(timeTracking.phaseStartDate);\n    const now = new Date();\n    performance.daysSpent = Math.ceil((now.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24));\n    performance.variance = performance.daysSpent - performance.estimatedDays;\n    \n    if (performance.variance > 2) {\n      performance.onSchedule = false;\n      performance.risks.push({\n        type: 'schedule_delay',\n        severity: performance.variance > 5 ? 'high' : 'medium',\n        description: `Current phase running ${performance.variance} days behind schedule`\n      });\n    }\n    \n    // Project completion estimate\n    const remainingPhases = Object.keys(projectPhases).slice(\n      Object.keys(projectPhases).indexOf(phase) + 1\n    );\n    \n    const remainingDays = remainingPhases.reduce((sum, phaseName) => \n      sum + projectPhases[phaseName].typicalDuration, 0\n    );\n    \n    const projectedDate = new Date(now.getTime() + (remainingDays * 24 * 60 * 60 * 1000));\n    performance.projectedCompletion = projectedDate.toISOString().split('T')[0];\n  }\n  \n  return performance;\n}\n\n// Analyze cost performance\nfunction analyzeCostPerformance(costTracking, phase) {\n  const performance = {\n    budgetStatus: 'on_budget',\n    actualCost: costTracking.actualCost || 0,\n    budgetedCost: costTracking.budgetedCost || 0,\n    variance: 0,\n    variancePercentage: 0,\n    burnRate: 0,\n    projectedOverrun: 0,\n    alerts: []\n  };\n  \n  if (performance.budgetedCost > 0) {\n    performance.variance = performance.actualCost - performance.budgetedCost;\n    performance.variancePercentage = (performance.variance / performance.budgetedCost) * 100;\n    \n    if (performance.variancePercentage > 10) {\n      performance.budgetStatus = 'over_budget';\n      performance.alerts.push({\n        type: 'budget_overrun',\n        severity: performance.variancePercentage > 20 ? 'high' : 'medium',\n        message: `Project ${performance.variancePercentage.toFixed(1)}% over budget`\n      });\n    } else if (performance.variancePercentage < -5) {\n      performance.budgetStatus = 'under_budget';\n    }\n  }\n  \n  // Calculate burn rate\n  if (costTracking.timeSpent > 0) {\n    performance.burnRate = performance.actualCost / costTracking.timeSpent; // Cost per day\n  }\n  \n  return performance;\n}\n\n// Analyze quality metrics\nfunction analyzeQualityMetrics(qualityMetrics, issues, completedTasks) {\n  const analysis = {\n    overallScore: 0,\n    inspectionResults: qualityMetrics.inspectionResults || [],\n    defectRate: 0,\n    reworkRate: 0,\n    complianceScore: qualityMetrics.complianceScore || 100,\n    qualityTrends: [],\n    recommendations: []\n  };\n  \n  // Calculate defect rate\n  const totalTasks = completedTasks.length;\n  const defectiveTasks = issues.filter(issue => issue.type === 'quality_issue').length;\n  analysis.defectRate = totalTasks > 0 ? (defectiveTasks / totalTasks) * 100 : 0;\n  \n  // Calculate rework rate\n  const reworkTasks = completedTasks.filter(task => task.reworkRequired).length;\n  analysis.reworkRate = totalTasks > 0 ? (reworkTasks / totalTasks) * 100 : 0;\n  \n  // Calculate overall quality score\n  const defectPenalty = Math.min(analysis.defectRate * 2, 30); // Max 30 point penalty\n  const reworkPenalty = Math.min(analysis.reworkRate * 1.5, 20); // Max 20 point penalty\n  const compliancePenalty = Math.max(0, 100 - analysis.complianceScore);\n  \n  analysis.overallScore = Math.max(0, 100 - defectPenalty - reworkPenalty - compliancePenalty);\n  \n  // Generate recommendations\n  if (analysis.defectRate > 5) {\n    analysis.recommendations.push({\n      priority: 'high',\n      area: 'quality_control',\n      action: 'Implement additional quality checkpoints and training'\n    });\n  }\n  \n  if (analysis.reworkRate > 10) {\n    analysis.recommendations.push({\n      priority: 'medium',\n      area: 'process_improvement',\n      action: 'Review installation procedures and provide additional training'\n    });\n  }\n  \n  return analysis;\n}\n\n// Analyze team performance\nfunction analyzeTeamPerformance(teamUpdates, completedTasks) {\n  const analysis = {\n    productivity: 'normal',\n    tasksPerDay: 0,\n    teamMorale: 'neutral',\n    skillGaps: [],\n    workloadDistribution: {},\n    recommendations: []\n  };\n  \n  if (teamUpdates && teamUpdates.length > 0) {\n    // Analyze task completion rate\n    const recentTasks = completedTasks.filter(task => {\n      const taskDate = new Date(task.completedAt || task.createdAt);\n      const weekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);\n      return taskDate >= weekAgo;\n    });\n    \n    analysis.tasksPerDay = recentTasks.length / 7;\n    \n    if (analysis.tasksPerDay > 5) {\n      analysis.productivity = 'high';\n    } else if (analysis.tasksPerDay < 2) {\n      analysis.productivity = 'low';\n      analysis.recommendations.push({\n        priority: 'medium',\n        area: 'productivity',\n        action: 'Investigate productivity bottlenecks and provide support'\n      });\n    }\n    \n    // Analyze workload distribution\n    teamUpdates.forEach(update => {\n      const memberId = update.teamMember || 'unknown';\n      if (!analysis.workloadDistribution[memberId]) {\n        analysis.workloadDistribution[memberId] = {\n          tasksAssigned: 0,\n          tasksCompleted: 0,\n          utilization: 0\n        };\n      }\n      \n      analysis.workloadDistribution[memberId].tasksAssigned += update.tasksAssigned || 0;\n      analysis.workloadDistribution[memberId].tasksCompleted += update.tasksCompleted || 0;\n    });\n    \n    // Calculate utilization rates\n    Object.keys(analysis.workloadDistribution).forEach(memberId => {\n      const member = analysis.workloadDistribution[memberId];\n      member.utilization = member.tasksAssigned > 0 ? \n        (member.tasksCompleted / member.tasksAssigned) * 100 : 0;\n    });\n  }\n  \n  return analysis;\n}\n\n// Generate predictive insights\nfunction generatePredictiveInsights(progress, timeline, cost, quality, team) {\n  const insights = {\n    successProbability: 85, // Base probability\n    riskFactors: [],\n    recommendations: [],\n    alerts: []\n  };\n  \n  // Analyze risk factors\n  if (progress.status === 'critical') {\n    insights.successProbability -= 30;\n    insights.riskFactors.push('Critical issues present');\n  } else if (progress.status === 'at_risk') {\n    insights.successProbability -= 15;\n    insights.riskFactors.push('Multiple major issues');\n  }\n  \n  if (!timeline.onSchedule) {\n    const schedulePenalty = Math.min(timeline.variance * 2, 20);\n    insights.successProbability -= schedulePenalty;\n    insights.riskFactors.push(`Schedule delay: ${timeline.variance} days`);\n  }\n  \n  if (cost.budgetStatus === 'over_budget') {\n    const budgetPenalty = Math.min(Math.abs(cost.variancePercentage) / 2, 15);\n    insights.successProbability -= budgetPenalty;\n    insights.riskFactors.push(`Budget overrun: ${cost.variancePercentage.toFixed(1)}%`);\n  }\n  \n  if (quality.overallScore < 80) {\n    insights.successProbability -= 10;\n    insights.riskFactors.push('Quality issues detected');\n  }\n  \n  if (team.productivity === 'low') {\n    insights.successProbability -= 10;\n    insights.riskFactors.push('Low team productivity');\n  }\n  \n  // Ensure probability stays within bounds\n  insights.successProbability = Math.max(10, Math.min(95, insights.successProbability));\n  \n  // Generate recommendations\n  if (insights.successProbability < 70) {\n    insights.recommendations.push({\n      priority: 'urgent',\n      action: 'Immediate project review and intervention required',\n      impact: 'high'\n    });\n  } else if (insights.successProbability < 85) {\n    insights.recommendations.push({\n      priority: 'high',\n      action: 'Address identified risk factors to improve success probability',\n      impact: 'medium'\n    });\n  }\n  \n  return insights;\n}\n\n// Process the progress update\nconst progressCalculation = calculateProjectProgress(phase, completedTasks, issues);\nconst timelineAnalysis = analyzeTimelinePerformance(phase, timeTracking, projectPhases);\nconst costAnalysis = analyzeCostPerformance(costTracking, phase);\nconst qualityAnalysis = analyzeQualityMetrics(qualityMetrics, issues, completedTasks);\nconst teamAnalysis = analyzeTeamPerformance(teamUpdates, completedTasks);\nconst predictiveInsights = generatePredictiveInsights(\n  progressCalculation, timelineAnalysis, costAnalysis, qualityAnalysis, teamAnalysis\n);\n\n// Create comprehensive progress report\nconst report = {\n  projectId,\n  updateId: `PU-${Date.now()}`,\n  timestamp,\n  updateType,\n  reportedBy,\n  \n  progress: progressCalculation,\n  timeline: timelineAnalysis,\n  cost: costAnalysis,\n  quality: qualityAnalysis,\n  team: teamAnalysis,\n  insights: predictiveInsights,\n  \n  currentSnapshot: {\n    phase: phase,\n    completedTasks: completedTasks.length,\n    activeIssues: issues.filter(i => i.status !== 'resolved').length,\n    teamMembers: teamUpdates.length,\n    customerSatisfaction: customerFeedback?.rating || null\n  },\n  \n  nextActions: [\n    ...predictiveInsights.recommendations,\n    ...qualityAnalysis.recommendations,\n    ...teamAnalysis.recommendations\n  ].slice(0, 5), // Top 5 actions\n  \n  milestones: {\n    upcoming: projectPhases[phase]?.milestones || [],\n    nextPhase: progressCalculation.nextPhase,\n    estimatedCompletion: timelineAnalysis.projectedCompletion\n  },\n  \n  alerts: [\n    ...costAnalysis.alerts,\n    ...timelineAnalysis.risks.map(risk => ({\n      type: risk.type,\n      severity: risk.severity,\n      message: risk.description\n    })),\n    ...predictiveInsights.alerts\n  ],\n  \n  metadata: {\n    generatedBy: 'ElectricalAI Pro Progress Monitor',\n    version: '1.3.0',\n    confidenceLevel: insights.successProbability > 80 ? 'high' : insights.successProbability > 60 ? 'medium' : 'low'\n  }\n};\n\nreturn [{ json: report }];"
+      },
+      "id": "2b3c4d5e-6f7g-8h9i-0j1k-l2m3n4o5p6q7",
+      "name": "Analyze Project Progress",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "operation": "insert",
+        "table": "project_progress_updates",
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "project_id": "={{ $json.projectId }}",
+            "update_id": "={{ $json.updateId }}",
+            "progress_data": "={{ JSON.stringify($json) }}",
+            "overall_progress": "={{ $json.progress.overallProgress }}",
+            "current_phase": "={{ $json.progress.currentPhase }}",
+            "project_status": "={{ $json.progress.status }}",
+            "success_probability": "={{ $json.insights.successProbability }}",
+            "active_issues": "={{ $json.currentSnapshot.activeIssues }}",
+            "budget_status": "={{ $json.cost.budgetStatus }}",
+            "quality_score": "={{ $json.quality.overallScore }}",
+            "created_at": "={{ $json.timestamp }}"
+          }
+        }
+      },
+      "id": "3c4d5e6f-7g8h-9i0j-1k2l-m3n4o5p6q7r8",
+      "name": "Save Progress Update",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.4,
+      "position": [680, 300],
+      "credentials": {
+        "postgres": {
+          "id": "postgres-electricalai",
+          "name": "ElectricalAI Database"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "critical_status",
+              "leftValue": "={{ $json.progress.status }}",
+              "rightValue": "critical",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            },
+            {
+              "id": "low_success",
+              "leftValue": "={{ $json.insights.successProbability }}",
+              "rightValue": 60,
+              "operator": {
+                "type": "number",
+                "operation": "lt"
+              }
+            }
+          ],
+          "combineOperation": "any"
+        },
+        "options": {}
+      },
+      "id": "4d5e6f7g-8h9i-0j1k-2l3m-n4o5p6q7r8s9",
+      "name": "Check Alert Conditions",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [900, 300]
+    },
+    {
+      "parameters": {
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "requestMethod": "POST",
+        "url": "https://api.electricalai.pro/notifications/project-alert",
+        "options": {
+          "timeout": 10000
+        },
+        "bodyParametersUi": {
+          "parameter": [
+            {
+              "name": "projectId",
+              "value": "={{ $('Save Progress Update').item.json.projectId }}"
+            },
+            {
+              "name": "status",
+              "value": "={{ $('Save Progress Update').item.json.progress.status }}"
+            },
+            {
+              "name": "successProbability",
+              "value": "={{ $('Save Progress Update').item.json.insights.successProbability }}"
+            },
+            {
+              "name": "alerts",
+              "value": "={{ JSON.stringify($('Save Progress Update').item.json.alerts) }}"
+            },
+            {
+              "name": "recommendations",
+              "value": "={{ JSON.stringify($('Save Progress Update').item.json.nextActions.slice(0, 3)) }}"
+            }
+          ]
+        }
+      },
+      "id": "5e6f7g8h-9i0j-1k2l-3m4n-o5p6q7r8s9t0",
+      "name": "Send Project Alert",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [1120, 200]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Generate dashboard update for real-time monitoring\nconst progressData = $('Save Progress Update').first().json;\n\n// Create dashboard-optimized data structure\nconst dashboardUpdate = {\n  projectId: progressData.projectId,\n  timestamp: progressData.timestamp,\n  \n  // Key metrics for dashboard cards\n  metrics: {\n    progress: {\n      overall: progressData.progress.overallProgress,\n      phase: progressData.progress.phaseProgress,\n      status: progressData.progress.status,\n      currentPhase: progressData.progress.currentPhase\n    },\n    timeline: {\n      onSchedule: progressData.timeline.onSchedule,\n      daysSpent: progressData.timeline.daysSpent,\n      variance: progressData.timeline.variance,\n      projectedCompletion: progressData.timeline.projectedCompletion\n    },\n    budget: {\n      status: progressData.cost.budgetStatus,\n      variance: progressData.cost.variancePercentage,\n      actualCost: progressData.cost.actualCost,\n      budgetedCost: progressData.cost.budgetedCost\n    },\n    quality: {\n      score: progressData.quality.overallScore,\n      defectRate: progressData.quality.defectRate,\n      complianceScore: progressData.quality.complianceScore\n    },\n    team: {\n      productivity: progressData.team.productivity,\n      tasksPerDay: progressData.team.tasksPerDay,\n      utilization: Object.values(progressData.team.workloadDistribution)\n        .reduce((avg, member, _, arr) => avg + member.utilization / arr.length, 0)\n    }\n  },\n  \n  // Risk indicators\n  risks: {\n    successProbability: progressData.insights.successProbability,\n    riskLevel: progressData.insights.successProbability > 80 ? 'low' : \n               progressData.insights.successProbability > 60 ? 'medium' : 'high',\n    activeAlerts: progressData.alerts.length,\n    criticalIssues: progressData.currentSnapshot.activeIssues\n  },\n  \n  // Recent activities\n  activities: [\n    {\n      type: 'progress_update',\n      message: `Project ${progressData.progress.overallProgress.toFixed(1)}% complete`,\n      timestamp: progressData.timestamp,\n      priority: 'info'\n    },\n    ...progressData.alerts.slice(0, 3).map(alert => ({\n      type: alert.type,\n      message: alert.message,\n      timestamp: progressData.timestamp,\n      priority: alert.severity\n    })),\n    ...progressData.nextActions.slice(0, 2).map(action => ({\n      type: 'recommendation',\n      message: action.action,\n      timestamp: progressData.timestamp,\n      priority: action.priority\n    }))\n  ],\n  \n  // Quick stats for widgets\n  quickStats: {\n    tasksCompleted: progressData.currentSnapshot.completedTasks,\n    daysInPhase: progressData.timeline.daysSpent,\n    teamMembers: progressData.currentSnapshot.teamMembers,\n    customerRating: progressData.currentSnapshot.customerSatisfaction\n  },\n  \n  // Next milestones\n  upcomingMilestones: progressData.milestones.upcoming.map(milestone => ({\n    name: milestone,\n    phase: progressData.progress.currentPhase,\n    estimatedDate: progressData.timeline.projectedCompletion\n  })),\n  \n  // Charts data\n  chartData: {\n    progressTrend: {\n      labels: ['Week 1', 'Week 2', 'Week 3', 'Current'],\n      data: [25, 45, 70, progressData.progress.overallProgress] // Simplified trend\n    },\n    budgetBurn: {\n      actual: progressData.cost.actualCost,\n      budgeted: progressData.cost.budgetedCost,\n      remaining: Math.max(0, progressData.cost.budgetedCost - progressData.cost.actualCost)\n    },\n    qualityTrend: {\n      current: progressData.quality.overallScore,\n      target: 95,\n      defectRate: progressData.quality.defectRate\n    }\n  }\n};\n\nreturn [{ json: dashboardUpdate }];"
+      },
+      "id": "6f7g8h9i-0j1k-2l3m-4n5o-p6q7r8s9t0u1",
+      "name": "Generate Dashboard Update",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1120, 400]
+    },
+    {
+      "parameters": {
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "requestMethod": "POST",
+        "url": "https://api.electricalai.pro/dashboard/update",
+        "options": {
+          "timeout": 10000
+        },
+        "bodyParametersUi": {
+          "parameter": [
+            {
+              "name": "projectId",
+              "value": "={{ $json.projectId }}"
+            },
+            {
+              "name": "dashboardData",
+              "value": "={{ JSON.stringify($json) }}"
+            },
+            {
+              "name": "updateType",
+              "value": "progress_metrics"
+            }
+          ]
+        }
+      },
+      "id": "7g8h9i0j-1k2l-3m4n-5o6p-q7r8s9t0u1v2",
+      "name": "Update Dashboard",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [1340, 400],
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "jsCode": "// Format final response for API consumers\nconst progressData = $('Save Progress Update').first().json;\nconst dashboardData = $('Generate Dashboard Update').first().json;\n\nconst response = {\n  success: true,\n  projectId: progressData.projectId,\n  updateId: progressData.updateId,\n  \n  summary: {\n    overallProgress: progressData.progress.overallProgress,\n    currentPhase: progressData.progress.currentPhase,\n    status: progressData.progress.status,\n    successProbability: progressData.insights.successProbability\n  },\n  \n  performance: {\n    timeline: {\n      onSchedule: progressData.timeline.onSchedule,\n      variance: progressData.timeline.variance,\n      projectedCompletion: progressData.timeline.projectedCompletion\n    },\n    budget: {\n      status: progressData.cost.budgetStatus,\n      variancePercentage: progressData.cost.variancePercentage,\n      remainingBudget: Math.max(0, progressData.cost.budgetedCost - progressData.cost.actualCost)\n    },\n    quality: {\n      score: progressData.quality.overallScore,\n      defectRate: progressData.quality.defectRate,\n      complianceScore: progressData.quality.complianceScore\n    }\n  },\n  \n  alerts: progressData.alerts.map(alert => ({\n    type: alert.type,\n    severity: alert.severity,\n    message: alert.message\n  })),\n  \n  recommendations: progressData.nextActions.slice(0, 3).map(action => ({\n    priority: action.priority,\n    action: action.action,\n    impact: action.impact || 'medium'\n  })),\n  \n  milestones: {\n    upcoming: progressData.milestones.upcoming,\n    nextPhase: progressData.milestones.nextPhase,\n    estimatedCompletion: progressData.milestones.estimatedCompletion\n  },\n  \n  team: {\n    productivity: progressData.team.productivity,\n    tasksPerDay: progressData.team.tasksPerDay,\n    memberCount: progressData.currentSnapshot.teamMembers\n  },\n  \n  dashboard: {\n    updated: true,\n    metrics: dashboardData.quickStats,\n    riskLevel: dashboardData.risks.riskLevel\n  },\n  \n  timestamp: progressData.timestamp\n};\n\nreturn [{ json: response }];"
+      },
+      "id": "8h9i0j1k-2l3m-4n5o-6p7q-r8s9t0u1v2w3",
+      "name": "Format Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1560, 300]
+    }
+  ],
+  "connections": {
+    "Webhook - Progress Update": {
+      "main": [
+        [
+          {
+            "node": "Analyze Project Progress",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Analyze Project Progress": {
+      "main": [
+        [
+          {
+            "node": "Save Progress Update",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save Progress Update": {
+      "main": [
+        [
+          {
+            "node": "Check Alert Conditions",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Alert Conditions": {
+      "main": [
+        [
+          {
+            "node": "Send Project Alert",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Generate Dashboard Update",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Project Alert": {
+      "main": [
+        [
+          {
+            "node": "Generate Dashboard Update",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate Dashboard Update": {
+      "main": [
+        [
+          {
+            "node": "Update Dashboard",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Dashboard": {
+      "main": [
+        [
+          {
+            "node": "Format Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "staticData": null,
+  "tags": [
+    {
+      "createdAt": "2025-08-01T00:00:00.000Z",
+      "updatedAt": "2025-08-01T00:00:00.000Z",
+      "id": "project-progress",
+      "name": "ElectricalAI Pro"
+    }
+  ],
+  "triggerCount": 1,
+  "updatedAt": "2025-08-01T00:00:00.000Z",
+  "versionId": "1"
+}

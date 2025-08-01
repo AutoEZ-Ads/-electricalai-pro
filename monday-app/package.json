@@ -1,0 +1,76 @@
+{
+  "name": "electricalai-pro-monday-app",
+  "version": "1.0.0",
+  "description": "AI-powered construction estimation with N8N workflow integration for Monday.com",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "react-scripts start",
+    "build": "react-scripts build",
+    "test": "react-scripts test",
+    "eject": "react-scripts eject",
+    "serve": "serve -s build -l 8080",
+    "deploy": "npm run build && mapps code:push",
+    "dev": "HTTPS=true react-scripts start",
+    "lint": "eslint src/",
+    "lint:fix": "eslint src/ --fix"
+  },
+  "dependencies": {
+    "@vibe/core": "^3.0.0",
+    "monday-sdk-js": "^0.4.0",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "react-scripts": "5.0.1",
+    "axios": "^1.6.0",
+    "styled-components": "^6.1.0",
+    "react-hook-form": "^7.47.0",
+    "react-query": "^3.39.0",
+    "uuid": "^9.0.0",
+    "date-fns": "^2.30.0",
+    "lodash": "^4.17.21",
+    "react-dropzone": "^14.2.3",
+    "react-router-dom": "^6.8.0",
+    "js-cookie": "^3.0.5"
+  },
+  "devDependencies": {
+    "@types/react": "^18.2.0",
+    "@types/react-dom": "^18.2.0",
+    "@types/styled-components": "^5.1.0",
+    "@types/uuid": "^9.0.0",
+    "@types/lodash": "^4.14.0",
+    "@types/js-cookie": "^3.0.0",
+    "eslint": "^8.0.0",
+    "eslint-plugin-react": "^7.33.0",
+    "eslint-plugin-react-hooks": "^4.6.0",
+    "serve": "^14.0.0",
+    "typescript": "^4.9.0"
+  },
+  "browserslist": {
+    "production": [
+      ">0.2%",
+      "not dead",
+      "not op_mini all"
+    ],
+    "development": [
+      "last 1 chrome version",
+      "last 1 firefox version",
+      "last 1 safari version"
+    ]
+  },
+  "homepage": ".",
+  "proxy": "http://localhost:3000",
+  "keywords": [
+    "monday.com",
+    "construction",
+    "electrical",
+    "estimation",
+    "n8n",
+    "automation",
+    "marketplace"
+  ],
+  "author": "ElectricalAI Pro",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/electricalai/monday-app.git"
+  }
+}

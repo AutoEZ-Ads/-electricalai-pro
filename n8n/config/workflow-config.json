@@ -1,0 +1,267 @@
+{
+  "workflowConfiguration": {
+    "version": "1.0.0",
+    "environment": "production",
+    "workflows": [
+      {
+        "id": "electrical-estimation",
+        "name": "ElectricalAI Pro - Estimation Pipeline",
+        "file": "electrical-estimation-workflow.json",
+        "webhook": "/webhook/electrical-estimation",
+        "description": "Complete electrical load calculation and cost estimation with NEC 2023 compliance",
+        "enabled": true,
+        "schedule": null,
+        "timeout": 30000,
+        "retries": 3,
+        "dependencies": ["postgres", "electricalai-api"],
+        "tags": ["estimation", "nec-compliance", "cost-calculation"],
+        "requiredCredentials": [
+          "postgres-electricalai",
+          "electricalai-api"
+        ],
+        "requiredEnvironmentVars": [
+          "ELECTRICALAI_API_URL",
+          "ELECTRICALAI_API_KEY"
+        ]
+      },
+      {
+        "id": "floor-plan-analysis",
+        "name": "ElectricalAI Pro - Floor Plan Analysis",
+        "file": "floor-plan-analysis-workflow.json",
+        "webhook": "/webhook/floor-plan-upload",
+        "description": "AI-powered floor plan analysis with electrical markup generation",
+        "enabled": true,
+        "schedule": null,
+        "timeout": 60000,
+        "retries": 2,
+        "dependencies": ["postgres", "openai-api", "electricalai-api"],
+        "tags": ["floor-plan", "ai-vision", "markup"],
+        "requiredCredentials": [
+          "postgres-electricalai",
+          "openai-electricalai",
+          "electricalai-api"
+        ],
+        "requiredEnvironmentVars": [
+          "OPENAI_API_KEY",
+          "ELECTRICALAI_API_URL",
+          "ELECTRICALAI_API_KEY"
+        ]
+      },
+      {
+        "id": "nec-compliance",
+        "name": "ElectricalAI Pro - NEC Compliance Checker",
+        "file": "nec-compliance-workflow.json",
+        "webhook": "/webhook/nec-compliance-check",
+        "description": "Comprehensive NEC 2023 compliance validation with certificate generation",
+        "enabled": true,
+        "schedule": null,
+        "timeout": 20000,
+        "retries": 2,
+        "dependencies": ["postgres", "electricalai-api"],
+        "tags": ["nec-compliance", "code-checking", "certification"],
+        "requiredCredentials": [
+          "postgres-electricalai",
+          "electricalai-api"
+        ],
+        "requiredEnvironmentVars": [
+          "ELECTRICALAI_API_URL",
+          "ELECTRICALAI_API_KEY"
+        ]
+      },
+      {
+        "id": "material-cost-tracking",
+        "name": "ElectricalAI Pro - Material Cost Tracking",
+        "file": "material-cost-tracking-workflow.json",
+        "webhook": "/webhook/material-cost-update",
+        "description": "Real-time material cost tracking with copper pricing and procurement optimization",
+        "enabled": true,
+        "schedule": "0 9 * * 1-5",
+        "timeout": 15000,
+        "retries": 3,
+        "dependencies": ["postgres", "metals-api", "electricalai-api"],
+        "tags": ["material-costs", "procurement", "copper-pricing"],
+        "requiredCredentials": [
+          "postgres-electricalai",
+          "electricalai-api"
+        ],
+        "requiredEnvironmentVars": [
+          "METALS_API_KEY",
+          "ELECTRICALAI_API_URL",
+          "ELECTRICALAI_API_KEY"
+        ]
+      },
+      {
+        "id": "project-progress",
+        "name": "ElectricalAI Pro - Project Progress Monitor",
+        "file": "project-progress-workflow.json",
+        "webhook": "/webhook/project-progress-update",
+        "description": "Real-time project monitoring with predictive analytics and dashboard updates",
+        "enabled": true,
+        "schedule": null,
+        "timeout": 25000,
+        "retries": 2,
+        "dependencies": ["postgres", "electricalai-api"],
+        "tags": ["project-monitoring", "progress-tracking", "analytics"],
+        "requiredCredentials": [
+          "postgres-electricalai",
+          "electricalai-api"
+        ],
+        "requiredEnvironmentVars": [
+          "ELECTRICALAI_API_URL",
+          "ELECTRICALAI_API_KEY"
+        ]
+      }
+    ]
+  },
+  
+  "credentials": {
+    "postgres-electricalai": {
+      "type": "postgres",
+      "name": "ElectricalAI Database",
+      "description": "Main PostgreSQL database for ElectricalAI Pro",
+      "requiredFields": ["host", "port", "database", "user", "password"],
+      "testConnection": true
+    },
+    "openai-electricalai": {
+      "type": "openAi",
+      "name": "ElectricalAI OpenAI",
+      "description": "OpenAI API for floor plan analysis and AI features",
+      "requiredFields": ["apiKey"],
+      "testConnection": true
+    },
+    "electricalai-api": {
+      "type": "httpHeaderAuth",
+      "name": "ElectricalAI API",
+      "description": "ElectricalAI Pro API authentication",
+      "requiredFields": ["headerName", "headerValue"],
+      "defaultValues": {
+        "headerName": "X-API-Key"
+      }
+    }
+  },
+  
+  "environmentVariables": {
+    "required": [
+      "ELECTRICALAI_API_URL",
+      "ELECTRICALAI_API_KEY",
+      "DB_POSTGRESDB_HOST",
+      "DB_POSTGRESDB_PORT",
+      "DB_POSTGRESDB_DATABASE",
+      "DB_POSTGRESDB_USER",
+      "DB_POSTGRESDB_PASSWORD"
+    ],
+    "optional": [
+      "OPENAI_API_KEY",
+      "CLAUDE_API_KEY",
+      "METALS_API_KEY",
+      "N8N_WEBHOOK_SECRET",
+      "N8N_SECURE_COOKIE"
+    ],
+    "defaults": {
+      "N8N_SECURE_COOKIE": "false",
+      "N8N_LOG_LEVEL": "info",
+      "EXECUTIONS_DATA_PRUNE": "true",
+      "EXECUTIONS_DATA_MAX_AGE": "336"
+    }
+  },
+  
+  "monitoring": {
+    "healthChecks": [
+      {
+        "name": "database_connection",
+        "type": "postgres",
+        "query": "SELECT 1",
+        "interval": 60000,
+        "timeout": 5000
+      },
+      {
+        "name": "api_connectivity",
+        "type": "http",
+        "url": "${ELECTRICALAI_API_URL}/health",
+        "interval": 120000,
+        "timeout": 10000
+      },
+      {
+        "name": "workflow_executions",
+        "type": "n8n",
+        "query": "executions",
+        "interval": 300000,
+        "successThreshold": 0.95
+      }
+    ],
+    "alerts": {
+      "webhook_failures": {
+        "threshold": 5,
+        "timeWindow": 300000,
+        "severity": "high"
+      },
+      "execution_timeouts": {
+        "threshold": 3,
+        "timeWindow": 600000,
+        "severity": "medium"
+      },
+      "database_errors": {
+        "threshold": 1,
+        "timeWindow": 60000,
+        "severity": "critical"
+      }
+    }
+  },
+  
+  "performance": {
+    "concurrency": {
+      "maxConcurrentExecutions": 10,
+      "queueMode": true,
+      "workerTimeout": 300000
+    },
+    "caching": {
+      "enabled": true,
+      "ttl": 3600000,
+      "maxSize": 1000
+    },
+    "rateLimit": {
+      "enabled": true,
+      "maxRequests": 100,
+      "windowMs": 900000
+    }
+  },
+  
+  "security": {
+    "authentication": {
+      "basicAuth": true,
+      "webhookAuth": true,
+      "apiKeyAuth": true
+    },
+    "encryption": {
+      "credentials": true,
+      "webhookData": true
+    },
+    "validation": {
+      "inputSanitization": true,
+      "outputFiltering": true,
+      "sqlInjectionPrevention": true
+    }
+  },
+  
+  "backup": {
+    "workflows": {
+      "enabled": true,
+      "schedule": "0 2 * * *",
+      "retention": 30,
+      "location": "./backups/workflows"
+    },
+    "credentials": {
+      "enabled": true,
+      "encrypted": true,
+      "schedule": "0 3 * * *",
+      "retention": 7,
+      "location": "./backups/credentials"
+    },
+    "executions": {
+      "enabled": true,
+      "schedule": "0 4 * * 0",
+      "retention": 90,
+      "location": "./backups/executions"
+    }
+  }
+}

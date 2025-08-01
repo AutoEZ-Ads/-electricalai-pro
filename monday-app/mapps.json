@@ -1,0 +1,189 @@
+{
+  "name": "ElectricalAI Pro - Construction Estimator",
+  "shortName": "ElectricalAI Pro",
+  "description": "AI-powered electrical construction estimation with automated NEC compliance checking, real-time material cost tracking, and project progress monitoring. Seamlessly integrates with N8N workflow automation.",
+  "longDescription": "Transform your electrical construction projects with ElectricalAI Pro's comprehensive estimation platform. Our app combines advanced AI analysis with industry-standard NEC 2023 compliance checking to deliver 94% accurate estimates in seconds. Features include automated floor plan analysis, real-time material cost tracking with live copper pricing, project progress monitoring with predictive analytics, and complete workflow automation through N8N integration. Perfect for electrical contractors, construction managers, and project teams who need reliable, code-compliant estimates with complete audit trails.",
+  "version": "1.0.0",
+  "versionName": "Production Release",
+  "icon": "./assets/icon.png",
+  "largeIcon": "./assets/large-icon.png",
+  "screenshots": [
+    "./assets/screenshot-1.png",
+    "./assets/screenshot-2.png", 
+    "./assets/screenshot-3.png",
+    "./assets/screenshot-4.png"
+  ],
+  "categories": ["productivity", "project_management", "integrations"],
+  "supportedLanguages": ["en"],
+  "developer": {
+    "name": "ElectricalAI Pro",
+    "email": "support@electricalai.pro",
+    "website": "https://electricalai.pro"
+  },
+  "features": [
+    {
+      "type": "ItemView",
+      "name": "Project Estimator",
+      "url": "/item-view",
+      "urlPath": "item-view",
+      "height": 500,
+      "assets": [
+        "./build/static/js/main.js",
+        "./build/static/css/main.css"
+      ]
+    },
+    {
+      "type": "BoardView", 
+      "name": "Estimation Dashboard",
+      "url": "/board-view",
+      "urlPath": "board-view",
+      "height": 400,
+      "assets": [
+        "./build/static/js/main.js",
+        "./build/static/css/main.css"
+      ]
+    },
+    {
+      "type": "IntegrationView",
+      "name": "Workflow Configuration",
+      "url": "/integration-view",
+      "urlPath": "integration-view",
+      "height": 600,
+      "assets": [
+        "./build/static/js/main.js",
+        "./build/static/css/main.css"
+      ]
+    }
+  ],
+  "permissions": [
+    "boards:read",
+    "boards:write",
+    "columns:read",
+    "columns:write",
+    "items:read",
+    "items:write",
+    "files:read",
+    "files:write",
+    "users:read",
+    "webhooks:read",
+    "webhooks:write"
+  ],
+  "webhookUrl": "https://electricalai-monday-app.onrender.com/webhook",
+  "webhookEvents": [
+    "create_item",
+    "change_column_value",
+    "create_update",
+    "item_deleted"
+  ],
+  "buildCommand": "npm run build",
+  "port": 8080,
+  "tunnelSubdomain": "electricalai-pro",
+  "env": {
+    "REACT_APP_MONDAY_CLIENT_ID": "",
+    "REACT_APP_N8N_WEBHOOK_BASE": "",
+    "REACT_APP_ELECTRICALAI_API_KEY": "",
+    "REACT_APP_ENVIRONMENT": "production"
+  },
+  "configurationFields": [
+    {
+      "key": "n8n_instance_url",
+      "name": "N8N Instance URL",
+      "description": "Your N8N workflow automation instance URL",
+      "type": "text",
+      "required": true,
+      "defaultValue": "https://your-n8n-instance.com"
+    },
+    {
+      "key": "api_key",
+      "name": "ElectricalAI API Key",
+      "description": "Your ElectricalAI Pro API key for advanced features",
+      "type": "password",
+      "required": true
+    },
+    {
+      "key": "default_project_type",
+      "name": "Default Project Type",
+      "description": "Default project type for new estimations",
+      "type": "dropdown",
+      "options": [
+        {"value": "residential", "label": "Residential"},
+        {"value": "commercial", "label": "Commercial"},
+        {"value": "industrial", "label": "Industrial"}
+      ],
+      "defaultValue": "residential"
+    },
+    {
+      "key": "enable_auto_compliance",
+      "name": "Auto NEC Compliance Check",
+      "description": "Automatically run NEC compliance checks on new projects",
+      "type": "checkbox",
+      "defaultValue": true
+    },
+    {
+      "key": "cost_tracking_enabled",
+      "name": "Real-time Cost Tracking",
+      "description": "Enable real-time material cost tracking and alerts",
+      "type": "checkbox", 
+      "defaultValue": true
+    }
+  ],
+  "hosting": {
+    "url": "https://electricalai-monday-app.onrender.com",
+    "tunnel": false
+  },
+  "pricing": {
+    "model": "freemium",
+    "plans": [
+      {
+        "name": "Starter",
+        "price": 0,
+        "currency": "USD",
+        "period": "monthly",
+        "features": [
+          "5 estimates per month",
+          "Basic NEC compliance check",
+          "Standard material cost data"
+        ]
+      },
+      {
+        "name": "Professional", 
+        "price": 29,
+        "currency": "USD",
+        "period": "monthly",
+        "features": [
+          "Unlimited estimates",
+          "Advanced NEC compliance with certificates",
+          "Real-time material cost tracking",
+          "Floor plan AI analysis",
+          "Project progress monitoring"
+        ]
+      },
+      {
+        "name": "Enterprise",
+        "price": 99,
+        "currency": "USD", 
+        "period": "monthly",
+        "features": [
+          "Everything in Professional",
+          "Custom workflow automation",
+          "Bulk project processing",
+          "Advanced analytics and reporting",
+          "Priority support"
+        ]
+      }
+    ]
+  },
+  "compliance": {
+    "dataRetention": "2 years",
+    "dataLocation": "US",
+    "gdprCompliant": true,
+    "socCompliant": false,
+    "encryptionInTransit": true,
+    "encryptionAtRest": true
+  },
+  "support": {
+    "email": "support@electricalai.pro",
+    "documentation": "https://docs.electricalai.pro/monday-app",
+    "helpCenter": "https://help.electricalai.pro"
+  }
+}

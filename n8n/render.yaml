@@ -1,0 +1,198 @@
+# 🚀 N8N Deployment Configuration for Render.com
+# Complete setup for ElectricalAI Pro workflow automation
+
+databases:
+  - name: n8n-postgres
+    databaseName: n8n_db
+    user: n8n_user
+    region: oregon
+    plan: starter
+    postgresMajorVersion: 14
+
+services:
+  # Main N8N Application
+  - type: web
+    name: electricalai-n8n
+    env: docker
+    dockerfilePath: ./n8n/Dockerfile.render
+    dockerContext: ./n8n
+    region: oregon
+    plan: standard
+    healthCheckPath: /healthz
+    envVars:
+      # Database Configuration
+      - key: DB_TYPE
+        value: postgresdb
+      - key: DB_POSTGRESDB_HOST
+        fromDatabase:
+          name: n8n-postgres
+          property: host
+      - key: DB_POSTGRESDB_PORT
+        fromDatabase:
+          name: n8n-postgres
+          property: port
+      - key: DB_POSTGRESDB_DATABASE
+        fromDatabase:
+          name: n8n-postgres
+          property: database
+      - key: DB_POSTGRESDB_USER
+        fromDatabase:
+          name: n8n-postgres
+          property: user
+      - key: DB_POSTGRESDB_PASSWORD
+        fromDatabase:
+          name: n8n-postgres
+          property: password
+      
+      # N8N Configuration
+      - key: N8N_HOST
+        value: electricalai-n8n.onrender.com
+      - key: N8N_PORT
+        value: 5678
+      - key: N8N_PROTOCOL
+        value: https
+      - key: NODE_ENV
+        value: production
+      
+      # Authentication
+      - key: N8N_BASIC_AUTH_ACTIVE
+        value: "true"
+      - key: N8N_BASIC_AUTH_USER
+        generateValue: true
+      - key: N8N_BASIC_AUTH_PASSWORD
+        generateValue: true
+      
+      # Webhook Configuration
+      - key: WEBHOOK_URL
+        value: https://electricalai-n8n.onrender.com/
+      
+      # Execution Settings
+      - key: EXECUTIONS_PROCESS
+        value: main
+      - key: EXECUTIONS_DATA_PRUNE
+        value: "true"
+      - key: EXECUTIONS_DATA_MAX_AGE
+        value: "336"
+      
+      # ElectricalAI Pro Integration
+      - key: ELECTRICALAI_API_URL
+        sync: false
+      - key: ELECTRICALAI_API_KEY
+        sync: false
+      
+      # External API Keys
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: CLAUDE_API_KEY
+        sync: false
+      
+      # Performance Settings
+      - key: N8N_METRICS
+        value: "true"
+      - key: N8N_METRICS_PREFIX
+        value: n8n_
+      
+      # Security
+      - key: N8N_ENCRYPTION_KEY
+        generateValue: true
+    
+    # Auto-deploy on push to main branch
+    buildCommand: echo "No build required"
+    startCommand: n8n start
+
+  # N8N Worker Service (For Queue Processing)
+  - type: worker
+    name: electricalai-n8n-worker
+    env: docker
+    dockerfilePath: ./n8n/Dockerfile.render
+    dockerContext: ./n8n
+    region: oregon
+    plan: starter
+    envVars:
+      # Database Configuration (same as main service)
+      - key: DB_TYPE
+        value: postgresdb
+      - key: DB_POSTGRESDB_HOST
+        fromDatabase:
+          name: n8n-postgres
+          property: host
+      - key: DB_POSTGRESDB_PORT
+        fromDatabase:
+          name: n8n-postgres
+          property: port
+      - key: DB_POSTGRESDB_DATABASE
+        fromDatabase:
+          name: n8n-postgres
+          property: database
+      - key: DB_POSTGRESDB_USER
+        fromDatabase:
+          name: n8n-postgres
+          property: user
+      - key: DB_POSTGRESDB_PASSWORD
+        fromDatabase:
+          name: n8n-postgres
+          property: password
+      
+      # Worker Configuration
+      - key: EXECUTIONS_MODE
+        value: queue
+      - key: EXECUTIONS_PROCESS
+        value: worker
+      
+      # Queue Configuration (using Render Redis)
+      - key: QUEUE_BULL_REDIS_HOST
+        fromService:
+          type: redis
+          name: electricalai-redis
+          property: host
+      - key: QUEUE_BULL_REDIS_PORT
+        fromService:
+          type: redis
+          name: electricalai-redis
+          property: port
+      
+      # ElectricalAI Pro Integration
+      - key: ELECTRICALAI_API_URL
+        sync: false
+      - key: ELECTRICALAI_API_KEY
+        sync: false
+    
+    startCommand: n8n worker
+
+  # Redis for Queue Management
+  - type: redis
+    name: electricalai-redis
+    region: oregon
+    plan: starter
+    maxmemoryPolicy: allkeys-lru
+
+# Cron Jobs for Maintenance
+- type: cron
+  name: n8n-cleanup
+  env: docker
+  dockerfilePath: ./n8n/Dockerfile.cron
+  dockerContext: ./n8n
+  schedule: "0 3 * * *"  # Daily at 3 AM
+  region: oregon
+  plan: starter
+  envVars:
+    - key: DB_POSTGRESDB_HOST
+      fromDatabase:
+        name: n8n-postgres
+        property: host
+    - key: DB_POSTGRESDB_PORT
+      fromDatabase:
+        name: n8n-postgres
+        property: port
+    - key: DB_POSTGRESDB_DATABASE
+      fromDatabase:
+        name: n8n-postgres
+        property: database
+    - key: DB_POSTGRESDB_USER
+      fromDatabase:
+        name: n8n-postgres
+        property: user
+    - key: DB_POSTGRESDB_PASSWORD
+      fromDatabase:
+        name: n8n-postgres
+        property: password

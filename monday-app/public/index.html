@@ -1,0 +1,246 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <link rel="icon" href="%PUBLIC_URL%/favicon.ico" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#667eea" />
+    <meta name="description" content="AI-powered electrical construction estimation with automated NEC compliance checking and N8N workflow integration for Monday.com" />
+    
+    <!-- App Icons -->
+    <link rel="icon" type="image/png" sizes="32x32" href="%PUBLIC_URL%/favicon-32x32.png">
+    <link rel="icon" type="image/png" sizes="16x16" href="%PUBLIC_URL%/favicon-16x16.png">
+    <link rel="apple-touch-icon" href="%PUBLIC_URL%/apple-touch-icon.png" />
+    
+    <!-- App Manifest -->
+    <link rel="manifest" href="%PUBLIC_URL%/manifest.json" />
+    
+    <!-- Monday.com SDK -->
+    <script src="https://cdn.monday.com/sdk/sdk.min.js"></script>
+    
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;700&display=swap" rel="stylesheet">
+    
+    <!-- Monday UI CSS Tokens -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/monday-ui-react-core@latest/tokens/index.css">
+    
+    <title>ElectricalAI Pro - Construction Estimator</title>
+    
+    <!-- Preload critical resources -->
+    <link rel="preload" href="https://cdn.monday.com/sdk/sdk.min.js" as="script">
+    
+    <!-- SEO Meta Tags -->
+    <meta property="og:title" content="ElectricalAI Pro - Construction Estimator" />
+    <meta property="og:description" content="AI-powered electrical construction estimation with automated NEC compliance checking and real-time material cost tracking." />
+    <meta property="og:image" content="%PUBLIC_URL%/og-image.png" />
+    <meta property="og:url" content="https://electricalai-monday-app.onrender.com" />
+    <meta property="og:type" content="website" />
+    
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="ElectricalAI Pro - Construction Estimator" />
+    <meta name="twitter:description" content="AI-powered electrical construction estimation with automated NEC compliance checking and real-time material cost tracking." />
+    <meta name="twitter:image" content="%PUBLIC_URL%/og-image.png" />
+    
+    <!-- App-specific styles -->
+    <style>
+      /* Loading screen styles */
+      #loading-screen {
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        color: white;
+        font-family: 'Roboto', sans-serif;
+        z-index: 9999;
+      }
+      
+      #loading-screen .logo {
+        font-size: 2.5rem;
+        font-weight: bold;
+        margin-bottom: 1rem;
+      }
+      
+      #loading-screen .spinner {
+        width: 40px;
+        height: 40px;
+        border: 3px solid rgba(255, 255, 255, 0.3);
+        border-top: 3px solid white;
+        border-radius: 50%;
+        animation: spin 1s linear infinite;
+        margin-bottom: 1rem;
+      }
+      
+      #loading-screen .message {
+        font-size: 1rem;
+        opacity: 0.9;
+      }
+      
+      @keyframes spin {
+        0% { transform: rotate(0deg); }
+        100% { transform: rotate(360deg); }
+      }
+      
+      /* Hide loading screen when React app loads */
+      #root:not(:empty) + #loading-screen {
+        display: none;
+      }
+      
+      /* Base app styles */
+      html, body {
+        margin: 0;
+        padding: 0;
+        height: 100%;
+        overflow: hidden;
+      }
+      
+      #root {
+        height: 100%;
+        width: 100%;
+      }
+      
+      /* Accessibility improvements */
+      @media (prefers-reduced-motion: reduce) {
+        .spinner {
+          animation: none;
+        }
+      }
+      
+      /* Error state styles */
+      .app-error-fallback {
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        background: #f8f9fa;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-family: 'Roboto', sans-serif;
+      }
+    </style>
+  </head>
+  <body>
+    <noscript>
+      <div style="
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        background: #f8f9fa;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        font-family: 'Roboto', sans-serif;
+        text-align: center;
+        padding: 2rem;
+      ">
+        <h1 style="color: #333; margin-bottom: 1rem;">JavaScript Required</h1>
+        <p style="color: #666;">
+          ElectricalAI Pro requires JavaScript to run. Please enable JavaScript in your browser settings and reload the page.
+        </p>
+        <p style="color: #666; margin-top: 1rem;">
+          This app provides AI-powered electrical construction estimation for Monday.com boards.
+        </p>
+      </div>
+    </noscript>
+    
+    <!-- React app root -->
+    <div id="root"></div>
+    
+    <!-- Loading screen (shown while React app initializes) -->
+    <div id="loading-screen">
+      <div class="logo">⚡ ElectricalAI Pro</div>
+      <div class="spinner"></div>
+      <div class="message">Initializing construction estimator...</div>
+    </div>
+    
+    <!-- App initialization error fallback -->
+    <script>
+      // Show error message if React app fails to load after 10 seconds
+      setTimeout(() => {
+        const root = document.getElementById('root');
+        const loadingScreen = document.getElementById('loading-screen');
+        
+        if (root && root.innerHTML === '' && loadingScreen) {
+          loadingScreen.innerHTML = `
+            <div class="logo">⚡ ElectricalAI Pro</div>
+            <div style="margin: 2rem 0; text-align: center;">
+              <h2 style="color: #ff6b6b; margin-bottom: 1rem;">Failed to Load</h2>
+              <p style="margin-bottom: 1rem;">The app failed to initialize. This might be due to:</p>
+              <ul style="text-align: left; margin-bottom: 2rem;">
+                <li>Network connectivity issues</li>
+                <li>Browser compatibility problems</li>
+                <li>Monday.com iframe restrictions</li>
+              </ul>
+              <button 
+                onclick="window.location.reload()" 
+                style="
+                  background: white;
+                  color: #667eea;
+                  border: none;
+                  padding: 0.75rem 1.5rem;
+                  border-radius: 4px;
+                  font-weight: bold;
+                  cursor: pointer;
+                  margin-right: 1rem;
+                "
+              >
+                Reload App
+              </button>
+              <a 
+                href="mailto:support@electricalai.pro?subject=App%20Load%20Error" 
+                style="
+                  color: white;
+                  text-decoration: underline;
+                "
+              >
+                Contact Support
+              </a>
+            </div>
+          `;
+        }
+      }, 10000);
+    </script>
+    
+    <!-- Performance monitoring -->
+    <script>
+      // Basic performance tracking
+      window.addEventListener('load', () => {
+        const loadTime = performance.now();
+        console.log(`ElectricalAI Pro loaded in ${Math.round(loadTime)}ms`);
+        
+        // Report to analytics (if available)
+        if (window.gtag) {
+          gtag('event', 'app_load_time', {
+            value: Math.round(loadTime),
+            custom_parameter: 'monday_app'
+          });
+        }
+      });
+      
+      // Error tracking
+      window.addEventListener('error', (event) => {
+        console.error('Global error:', event.error);
+        
+        // Report critical errors
+        if (window.gtag) {
+          gtag('event', 'exception', {
+            description: event.error?.message || 'Unknown error',
+            fatal: true
+          });
+        }
+      });
+    </script>
+  </body>
+</html>

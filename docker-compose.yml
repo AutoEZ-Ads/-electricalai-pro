@@ -1,0 +1,199 @@
+version: '3.8'
+services:
+  # N8N Workflow Engine - Core orchestration system
+  n8n:
+    image: n8nio/n8n:latest
+    container_name: electrical-n8n
+    ports:
+      - "5678:5678"
+    environment:
+      - N8N_BASIC_AUTH_ACTIVE=true
+      - N8N_BASIC_AUTH_USER=admin
+      - N8N_BASIC_AUTH_PASSWORD=${N8N_PASSWORD:-electrical2024}
+      - N8N_HOST=localhost
+      - N8N_PORT=5678
+      - N8N_PROTOCOL=http
+      - NODE_ENV=development
+      - WEBHOOK_URL=http://localhost:5678/
+      - GENERIC_TIMEZONE=America/New_York
+      - DB_TYPE=postgresdb
+      - DB_POSTGRESDB_HOST=postgres
+      - DB_POSTGRESDB_PORT=5432
+      - DB_POSTGRESDB_DATABASE=electrical_estimation
+      - DB_POSTGRESDB_USER=n8n_user
+      - DB_POSTGRESDB_PASSWORD=${DB_PASSWORD:-electrical_db_pass}
+    volumes:
+      - ./n8n/data:/home/node/.n8n
+      - ./n8n/custom-nodes:/home/node/.n8n/custom
+      - ./n8n/workflows:/home/node/.n8n/workflows
+      - ./n8n/credentials:/home/node/.n8n/credentials
+    depends_on:
+      - postgres
+      - redis
+    restart: unless-stopped
+
+  # PostgreSQL Database - Main data storage
+  postgres:
+    image: postgres:13
+    container_name: electrical-postgres
+    environment:
+      - POSTGRES_DB=electrical_estimation
+      - POSTGRES_USER=n8n_user
+      - POSTGRES_PASSWORD=${DB_PASSWORD:-electrical_db_pass}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./webapp/database/init.sql:/docker-entrypoint-initdb.d/init.sql
+    ports:
+      - "5432:5432"
+    restart: unless-stopped
+
+  # Redis - Caching and inter-service communication
+  redis:
+    image: redis:7-alpine
+    container_name: electrical-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    restart: unless-stopped
+
+  # Web Application Backend
+  webapp-backend:
+    build: 
+      context: ./webapp/backend
+      dockerfile: Dockerfile
+    container_name: electrical-backend
+    ports:
+      - "3001:3001"
+    environment:
+      - DATABASE_URL=postgresql://n8n_user:${DB_PASSWORD:-electrical_db_pass}@postgres:5432/electrical_estimation
+      - REDIS_URL=redis://redis:6379
+      - N8N_WEBHOOK_URL=http://n8n:5678/webhook
+      - NODE_ENV=development
+    depends_on:
+      - postgres
+      - redis
+      - n8n
+    volumes:
+      - ./webapp/backend:/app
+      - /app/node_modules
+    restart: unless-stopped
+
+  # Web Application Frontend
+  webapp-frontend:
+    build:
+      context: ./webapp/frontend
+      dockerfile: Dockerfile
+    container_name: electrical-frontend
+    ports:
+      - "3000:3000"
+    environment:
+      - REACT_APP_API_URL=http://localhost:3001
+      - REACT_APP_N8N_URL=http://localhost:5678
+      - CHOKIDAR_USEPOLLING=true
+    volumes:
+      - ./webapp/frontend:/app
+      - /app/node_modules
+    depends_on:
+      - webapp-backend
+    restart: unless-stopped
+
+  # Electrical Calculator Plugin Service
+  electrical-calculator:
+    build:
+      context: ./plugins/electrical-calculator
+      dockerfile: Dockerfile
+    container_name: electrical-calculator
+    ports:
+      - "3002:3002"
+    environment:
+      - REDIS_URL=redis://redis:6379
+      - DATABASE_URL=postgresql://n8n_user:${DB_PASSWORD:-electrical_db_pass}@postgres:5432/electrical_estimation
+    depends_on:
+      - redis
+      - postgres
+    restart: unless-stopped
+
+  # Material Database Service
+  material-database:
+    build:
+      context: ./plugins/material-database
+      dockerfile: Dockerfile
+    container_name: material-database
+    ports:
+      - "3003:3003"
+    environment:
+      - DATABASE_URL=postgresql://n8n_user:${DB_PASSWORD:-electrical_db_pass}@postgres:5432/electrical_estimation
+      - REDIS_URL=redis://redis:6379
+    depends_on:
+      - postgres
+      - redis
+    restart: unless-stopped
+
+  # Report Generator Service
+  report-generator:
+    build:
+      context: ./plugins/report-generator
+      dockerfile: Dockerfile
+    container_name: report-generator
+    ports:
+      - "3004:3004"
+    environment:
+      - DATABASE_URL=postgresql://n8n_user:${DB_PASSWORD:-electrical_db_pass}@postgres:5432/electrical_estimation
+    volumes:
+      - ./reports:/app/reports
+    depends_on:
+      - postgres
+    restart: unless-stopped
+
+  # MCP Servers (Your existing services integrated)
+  electrical_filesystem:
+    image: filesystem-mcp
+    container_name: electrical_filesystem
+    volumes:
+      - ./blueprints:/data:ro
+      - ./reports:/reports:rw
+    environment:
+      - MCP_SERVER_PORT=3005
+    ports:
+      - "3005:3005"
+    stdin_open: true
+    tty: true
+    restart: unless-stopped
+
+  pricing_database:
+    image: electrical-pricing-mcp
+    container_name: pricing_database
+    environment:
+      - POSTGRES_URL=postgresql://n8n_user:${DB_PASSWORD:-electrical_db_pass}@postgres:5432/electrical_estimation
+      - MCP_SERVER_PORT=3006
+    ports:
+      - "3006:3006"
+    depends_on:
+      - postgres
+    stdin_open: true
+    tty: true
+    restart: unless-stopped
+
+  nec_compliance:
+    image: nec-compliance-mcp
+    container_name: nec_compliance
+    environment:
+      - NEC_VERSION=2023
+      - DATABASE_URL=postgresql://n8n_user:${DB_PASSWORD:-electrical_db_pass}@postgres:5432/electrical_estimation
+      - MCP_SERVER_PORT=3007
+    ports:
+      - "3007:3007"
+    depends_on:
+      - postgres
+    stdin_open: true
+    tty: true
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  redis_data:
+
+networks:
+  default:
+    driver: bridge
