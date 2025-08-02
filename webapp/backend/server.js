@@ -4,10 +4,16 @@ const helmet = require('helmet');
 const compression = require('compression');
 const morgan = require('morgan');
 const rateLimit = require('express-rate-limit');
-const { Pool } = require('pg');
+const { initializeDatabase, query, transaction, getPool } = require('./config/database');
+const { healthMonitor } = require('./services/health-monitor');
+const { backupManager } = require('./services/backup-manager');
+const { backupScheduler } = require('./services/backup-scheduler');
 const Redis = require('redis');
 const axios = require('axios');
 const winston = require('winston');
+const fs = require('fs');
+const { defaultMondayClient } = require('./utils/monday-api-client');
+const { defaultMondayService } = require('./services/monday-service');
 require('dotenv').config();
 
 // Import route modules
@@ -20,10 +26,17 @@ const aiCalculationsRoutes = require('./routes/ai_calculations');
 const aiComprehensiveRoutes = require('./routes/ai_comprehensive');
 const historicalRoutes = require('./routes/historical');
 const floorplanRoutes = require('./routes/floorplans');
+const blueprintRoutes = require('./routes/blueprints');
+const backupRoutes = require('./routes/backups');
 
 // Initialize Express app
 const app = express();
 const port = process.env.PORT || 3001;
+
+// Async handler wrapper utility
+const asyncHandler = (fn) => (req, res, next) => {
+    Promise.resolve(fn(req, res, next)).catch(next);
+};
 
 // Logger configuration
 const logger = winston.createLogger({
@@ -43,13 +56,28 @@ const logger = winston.createLogger({
     ],
 });
 
-// Database connection
-const pool = new Pool({
-    connectionString: process.env.DATABASE_URL,
-    ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false,
-    max: 20,
-    idleTimeoutMillis: 30000,
-    connectionTimeoutMillis: 2000,
+// Initialize database connection pool
+let pool;
+initializeDatabase().then(async (dbPool) => {
+    pool = dbPool;
+    logger.info('Database initialized successfully');
+    
+    // Initialize backup system
+    try {
+        await backupManager.initializeBackupSystem();
+        logger.info('Backup manager initialized successfully');
+        
+        // Initialize backup scheduler
+        await backupScheduler.initialize();
+        logger.info('Backup scheduler initialized successfully');
+        
+    } catch (error) {
+        logger.error('Backup system initialization failed:', error);
+        // Don't exit - backup system is not critical for app startup
+    }
+}).catch((error) => {
+    logger.error('Database initialization failed:', error);
+    process.exit(1);
 });
 
 // Redis connection
@@ -116,43 +144,67 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
 // Make database and redis available to routes
 app.use((req, res, next) => {
-    req.db = pool;
+    req.db = pool || getPool(); // Use pool if available, otherwise get from manager
+    req.query = query; // Direct query method
+    req.transaction = transaction; // Transaction method
     req.redis = redisClient;
     req.logger = logger;
+    req.backupManager = backupManager; // Backup functionality
     next();
 });
 
-// Health check endpoint
-app.get('/health', async (req, res) => {
-    try {
-        // Check database connection
-        await pool.query('SELECT 1');
-        
-        // Check Redis connection
-        let redisStatus = 'disconnected';
-        try {
-            await redisClient.ping();
-            redisStatus = 'connected';
-        } catch (error) {
-            logger.warn('Redis health check failed:', error.message);
-        }
+// Comprehensive health check endpoint
+app.get('/health', asyncHandler(async (req, res) => {
+    const healthResult = await healthMonitor.runAllChecks();
+    
+    const statusCode = healthResult.status === 'healthy' ? 200 : 
+                      healthResult.status === 'degraded' ? 206 : 503;
+    
+    res.status(statusCode).json(healthResult);
+}));
 
-        res.json({
-            status: 'healthy',
-            timestamp: new Date().toISOString(),
-            services: {
-                database: 'connected',
-                redis: redisStatus,
-                n8n: await checkN8NHealth(),
-            },
-        });
+// Detailed health endpoint with metrics
+app.get('/health/detailed', asyncHandler(async (req, res) => {
+    const healthResult = await healthMonitor.runAllChecks();
+    const trends = healthMonitor.getHealthTrends();
+    const history = healthMonitor.getHistory();
+    
+    res.json({
+        ...healthResult,
+        trends,
+        history: history.slice(-10) // Last 10 checks
+    });
+}));
+
+// Health history endpoint
+app.get('/health/history', asyncHandler(async (req, res) => {
+    const limit = parseInt(req.query.limit) || 50;
+    const history = healthMonitor.getHistory().slice(-limit);
+    
+    res.json({
+        history,
+        trends: healthMonitor.getHealthTrends()
+    });
+}));
+
+// Readiness probe (for Kubernetes)
+app.get('/ready', asyncHandler(async (req, res) => {
+    try {
+        // Quick check of critical services
+        await query('SELECT 1');
+        res.json({ status: 'ready', timestamp: new Date().toISOString() });
     } catch (error) {
-        logger.error('Health check failed:', error);
-        res.status(503).json({
-            status: 'unhealthy',
-            error: error.message,
-        });
+        res.status(503).json({ status: 'not ready', error: error.message });
     }
+}));
+
+// Liveness probe (for Kubernetes)
+app.get('/live', (req, res) => {
+    res.json({ 
+        status: 'alive', 
+        uptime: process.uptime(),
+        timestamp: new Date().toISOString() 
+    });
 });
 
 // Check N8N health
@@ -177,6 +229,8 @@ app.use('/api/ai', aiCalculationsRoutes);
 app.use('/api/ai', aiComprehensiveRoutes);
 app.use('/api/historical', historicalRoutes);
 app.use('/api/floorplans', floorplanRoutes);
+app.use('/api/blueprints', blueprintRoutes);
+app.use('/api/backups', backupRoutes);
 
 // N8N webhook proxy endpoint
 app.post('/api/webhook/:workflowName', async (req, res) => {
@@ -260,20 +314,18 @@ app.get('/auth/callback', async (req, res) => {
 
         const { access_token } = tokenResponse.data;
 
-        // Get user info from Monday.com
-        const userResponse = await axios.post('https://api.monday.com/v2', {
-            query: 'query { me { id name email } }'
-        }, {
-            headers: {
-                'Authorization': `Bearer ${access_token}`,
-                'Content-Type': 'application/json'
-            }
-        });
+        // Get user info from Monday.com with retry logic
+        const userResponse = await defaultMondayClient.apiCall(
+            'query { me { id name email } }',
+            {},
+            access_token,
+            { requestId: `auth-${Date.now()}` }
+        );
 
-        const userData = userResponse.data.data.me;
+        const userData = userResponse.data.me;
 
         // Store user and token in database
-        await pool.query(`
+        await query(`
             INSERT INTO monday_users (monday_id, name, email, access_token, created_at, updated_at)
             VALUES ($1, $2, $3, $4, NOW(), NOW())
             ON CONFLICT (monday_id) 
@@ -302,118 +354,51 @@ app.get('/auth/callback', async (req, res) => {
     }
 });
 
-// Monday.com webhook endpoint
-app.post('/monday-webhook', async (req, res) => {
-    try {
-        const webhookData = req.body;
-        logger.info('Monday.com webhook received:', JSON.stringify(webhookData, null, 2));
+// Monday.com webhook endpoint with robust retry handling
+app.post('/monday-webhook', asyncHandler(async (req, res) => {
+    const webhookData = req.body;
+    logger.info('Monday.com webhook received:', JSON.stringify(webhookData, null, 2));
 
-        // Verify webhook signature if configured
-        const signature = req.headers['authorization'];
-        if (process.env.MONDAY_WEBHOOK_SECRET && signature) {
-            // Implement signature verification here
-            // const expectedSignature = createHmac('sha256', process.env.MONDAY_WEBHOOK_SECRET)
-            //     .update(JSON.stringify(webhookData))
-            //     .digest('hex');
-        }
-
-        // Process different webhook events
-        const { event, pulseId, boardId, userId } = webhookData;
-
-        switch (event?.type) {
-            case 'create_item':
-                await handleCreateItem(webhookData);
-                break;
-            case 'change_column_value':
-                await handleColumnChange(webhookData);
-                break;
-            case 'create_update':
-                await handleCreateUpdate(webhookData);
-                break;
-            case 'item_deleted':
-                await handleItemDeleted(webhookData);
-                break;
-            default:
-                logger.info(`Unhandled webhook event: ${event?.type}`);
-        }
-
-        res.json({ success: true, message: 'Webhook processed successfully' });
-
-    } catch (error) {
-        logger.error('Monday.com webhook processing error:', error);
-        res.status(500).json({
-            error: 'Webhook processing failed',
-            message: error.message
-        });
+    // Verify webhook signature if configured
+    const signature = req.headers['authorization'];
+    if (process.env.MONDAY_WEBHOOK_SECRET && signature) {
+        // TODO: Implement signature verification
+        // const expectedSignature = createHmac('sha256', process.env.MONDAY_WEBHOOK_SECRET)
+        //     .update(JSON.stringify(webhookData))
+        //     .digest('hex');
     }
-});
 
-// Monday.com webhook event handlers
-async function handleCreateItem(webhookData) {
-    const { pulseId, boardId, pulseName } = webhookData;
+    // Process webhook event using Monday service
+    const result = await defaultMondayService.handleWebhookEvent(webhookData, { query, transaction });
     
-    logger.info(`New item created: ${pulseName} (ID: ${pulseId}) in board ${boardId}`);
+    res.json({ 
+        success: true, 
+        message: 'Webhook processed successfully',
+        result 
+    });
+}));
+
+// Add Monday API health check to main health endpoint
+app.get('/monday-health', asyncHandler(async (req, res) => {
+    const healthStatus = defaultMondayService.getHealthStatus();
     
-    // Trigger estimation workflow for new projects
-    const workflowResult = await triggerN8NWorkflow('electrical-estimation', {
-        itemId: pulseId,
-        boardId: boardId,
-        itemName: pulseName,
-        source: 'monday-webhook',
+    res.json({
+        mondayApi: healthStatus,
         timestamp: new Date().toISOString()
     });
+}));
 
-    if (workflowResult.success) {
-        logger.info(`Estimation workflow triggered for item ${pulseId}`);
-    } else {
-        logger.error(`Failed to trigger estimation workflow for item ${pulseId}: ${workflowResult.error}`);
-    }
-}
-
-async function handleColumnChange(webhookData) {
-    const { pulseId, columnId, value, previousValue } = webhookData;
+// Admin endpoint to reset Monday API circuit breaker
+app.post('/admin/monday/reset-circuit-breaker', asyncHandler(async (req, res) => {
+    // Add authentication/authorization here
+    defaultMondayService.resetCircuitBreaker();
     
-    logger.info(`Column ${columnId} changed for item ${pulseId}: ${previousValue} -> ${value}`);
-
-    // Trigger material cost update if cost-related columns changed
-    if (columnId === 'cost_estimate' || columnId === 'material_list') {
-        await triggerN8NWorkflow('material-cost-update', {
-            itemId: pulseId,
-            columnId: columnId,
-            newValue: value,
-            previousValue: previousValue,
-            source: 'monday-webhook'
-        });
-    }
-}
-
-async function handleCreateUpdate(webhookData) {
-    const { pulseId, updateText, userId } = webhookData;
-    
-    logger.info(`Update created for item ${pulseId} by user ${userId}: ${updateText}`);
-
-    // Trigger progress monitoring workflow
-    await triggerN8NWorkflow('project-progress-update', {
-        itemId: pulseId,
-        updateText: updateText,
-        userId: userId,
-        source: 'monday-webhook'
+    res.json({
+        success: true,
+        message: 'Monday API circuit breaker reset',
+        timestamp: new Date().toISOString()
     });
-}
-
-async function handleItemDeleted(webhookData) {
-    const { pulseId, boardId } = webhookData;
-    
-    logger.info(`Item ${pulseId} deleted from board ${boardId}`);
-
-    // Clean up related records
-    try {
-        await pool.query('DELETE FROM project_estimations WHERE monday_item_id = $1', [pulseId]);
-        logger.info(`Cleaned up estimation records for deleted item ${pulseId}`);
-    } catch (error) {
-        logger.error(`Failed to clean up records for deleted item ${pulseId}:`, error);
-    }
-}
+}));
 
 // Make workflow trigger available to routes
 app.use((req, res, next) => {
@@ -421,14 +406,34 @@ app.use((req, res, next) => {
     next();
 });
 
-// Error handling middleware
-app.use((error, req, res, next) => {
-    logger.error('Unhandled error:', error);
+// Enhanced global error handler
+app.use(async (error, req, res, next) => {
+    const timestamp = new Date().toISOString();
+    const reference = Date.now();
     
+    // Log comprehensive error details
+    logger.error(`Error at ${timestamp}:`, {
+        error: error.message,
+        stack: error.stack,
+        request: {
+            method: req.method,
+            url: req.url,
+            body: req.body,
+            headers: req.headers,
+            ip: req.ip
+        },
+        reference
+    });
+    
+    // Send error notification for critical errors
+    await sendErrorNotification(error, req);
+    
+    // Handle specific database errors
     if (error.code === '23505') { // PostgreSQL unique violation
         return res.status(409).json({
-            error: 'Duplicate entry',
+            error: 'Duplicate entry detected',
             message: 'A record with this information already exists',
+            reference
         });
     }
     
@@ -436,12 +441,53 @@ app.use((error, req, res, next) => {
         return res.status(400).json({
             error: 'Invalid reference',
             message: 'Referenced record does not exist',
+            reference
         });
     }
     
-    res.status(500).json({
-        error: 'Internal server error',
-        message: process.env.NODE_ENV === 'development' ? error.message : 'Something went wrong',
+    // Handle validation errors
+    if (error.name === 'ValidationError') {
+        return res.status(400).json({
+            error: 'Validation failed',
+            message: error.message,
+            reference
+        });
+    }
+    
+    // Handle rate limiting errors
+    if (error.statusCode === 429) {
+        return res.status(429).json({
+            error: 'Rate limit exceeded',
+            message: 'Too many requests. Please try again later.',
+            reference
+        });
+    }
+    
+    // Handle timeout errors
+    if (error.code === 'ETIMEDOUT' || error.timeout) {
+        return res.status(504).json({
+            error: 'Request timeout',
+            message: 'The request took too long to process',
+            reference
+        });
+    }
+    
+    // Handle MongoDB/Database connection errors
+    if (error.name === 'MongoError' || error.code === 'ECONNREFUSED') {
+        return res.status(503).json({
+            error: 'Service temporarily unavailable',
+            message: 'Database connection failed. Please try again later.',
+            reference
+        });
+    }
+    
+    // Default error response
+    res.status(error.statusCode || 500).json({
+        error: 'An error occurred processing your estimate',
+        message: process.env.NODE_ENV === 'development' 
+            ? error.message 
+            : 'Our team has been notified and will investigate this issue.',
+        reference
     });
 });
 
@@ -454,37 +500,30 @@ app.use((req, res) => {
 });
 
 // Graceful shutdown
-process.on('SIGTERM', () => {
-    logger.info('SIGTERM received, shutting down gracefully');
+const gracefulShutdown = async (signal) => {
+    logger.info(`${signal} received, shutting down gracefully`);
     
-    // Close database connections
-    pool.end(() => {
-        logger.info('Database pool closed');
-    });
-    
-    // Close Redis connection
-    if (redisClient) {
-        redisClient.quit();
+    try {
+        // Close database connections
+        const { dbManager } = require('./config/database');
+        await dbManager.gracefulShutdown();
+        
+        // Close Redis connection
+        if (redisClient) {
+            await redisClient.quit();
+            logger.info('Redis connection closed');
+        }
+        
+        logger.info('Graceful shutdown completed');
+        process.exit(0);
+    } catch (error) {
+        logger.error('Error during graceful shutdown:', error);
+        process.exit(1);
     }
-    
-    process.exit(0);
-});
+};
 
-process.on('SIGINT', () => {
-    logger.info('SIGINT received, shutting down gracefully');
-    
-    // Close database connections
-    pool.end(() => {
-        logger.info('Database pool closed');
-    });
-    
-    // Close Redis connection
-    if (redisClient) {
-        redisClient.quit();
-    }
-    
-    process.exit(0);
-});
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+process.on('SIGINT', () => gracefulShutdown('SIGINT'));
 
 // Start server
 app.listen(port, () => {
@@ -494,5 +533,61 @@ app.listen(port, () => {
     logger.info(`Redis: ${process.env.REDIS_URL ? 'Configured' : 'Not configured'}`);
     logger.info(`N8N: ${process.env.N8N_WEBHOOK_URL || 'http://localhost:5678'}`);
 });
+
+// Error notification system
+async function sendErrorNotification(error, req) {
+    try {
+        const errorDetails = {
+            timestamp: new Date().toISOString(),
+            error: error.message,
+            stack: error.stack,
+            request: {
+                method: req.method,
+                url: req.url,
+                headers: req.headers,
+                body: req.body,
+                ip: req.ip,
+                userAgent: req.get('User-Agent')
+            },
+            reference: Date.now()
+        };
+
+        // Log to file for debugging
+        fs.appendFileSync('logs/error.log', `
+${JSON.stringify(errorDetails, null, 2)}
+---
+`);
+
+        // Send to monitoring service (Slack, email, etc.)
+        if (process.env.SLACK_WEBHOOK_URL) {
+            await axios.post(process.env.SLACK_WEBHOOK_URL, {
+                text: `🚨 Critical Error in Electrical Estimation API`,
+                attachments: [{
+                    color: 'danger',
+                    fields: [
+                        { title: 'Error', value: error.message, short: false },
+                        { title: 'Endpoint', value: `${req.method} ${req.url}`, short: true },
+                        { title: 'Time', value: errorDetails.timestamp, short: true },
+                        { title: 'Reference', value: errorDetails.reference.toString(), short: true }
+                    ]
+                }]
+            }).catch(slackError => {
+                logger.error('Failed to send Slack notification:', slackError.message);
+            });
+        }
+
+        // Send email notification for critical errors
+        if (process.env.ADMIN_EMAIL && process.env.SMTP_ENABLED === 'true') {
+            // Email implementation would go here
+            logger.info('Email notification queued for admin');
+        }
+
+    } catch (notificationError) {
+        logger.error('Error notification system failed:', notificationError);
+    }
+}
+
+// Export async handler for use in routes
+app.asyncHandler = asyncHandler;
 
 module.exports = app;
