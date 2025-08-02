@@ -28,6 +28,11 @@ const historicalRoutes = require('./routes/historical');
 const floorplanRoutes = require('./routes/floorplans');
 const blueprintRoutes = require('./routes/blueprints');
 const backupRoutes = require('./routes/backups');
+const aiEnhancedRoutes = require('./routes/ai-enhanced');
+
+// Import advanced middleware
+const { advancedMonitoring, prometheus } = require('./middleware/advanced-monitoring');
+const { applyBasicSecurity, rateLimits } = require('./middleware/production-security');
 
 // Initialize Express app
 const app = express();
@@ -231,6 +236,17 @@ app.use('/api/historical', historicalRoutes);
 app.use('/api/floorplans', floorplanRoutes);
 app.use('/api/blueprints', blueprintRoutes);
 app.use('/api/backups', backupRoutes);
+app.use('/api/ai-enhanced', rateLimits.ai, aiEnhancedRoutes);
+
+// Metrics endpoint for monitoring
+app.get('/metrics', async (req, res) => {
+    try {
+        res.set('Content-Type', prometheus.register.contentType);
+        res.end(await prometheus.register.metrics());
+    } catch (error) {
+        res.status(500).end(error);
+    }
+});
 
 // N8N webhook proxy endpoint
 app.post('/api/webhook/:workflowName', async (req, res) => {

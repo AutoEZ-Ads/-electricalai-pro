@@ -41,7 +41,11 @@
     "file-type": "^18.7.0",
     "aws-sdk": "^2.1691.0",
     "@google-cloud/storage": "^7.7.0",
-    "node-cron": "^3.0.3"
+    "node-cron": "^3.0.3",
+    "openai": "^4.24.1",
+    "prom-client": "^15.1.0",
+    "validator": "^13.11.0",
+    "express-slow-down": "^1.6.0"
   },
   "devDependencies": {
     "nodemon": "^3.0.2",
